@@ -21,8 +21,10 @@
 //     un-dispatched 0x5C/0x5F sub-opcodes (MAME UNHANDLED). MMU/TLB effects are
 //     absent like MAME, but CLRTLB still decodes its complete operand. Address-
 //     trap and separate IN/OUT-space side effects remain outside the S32 profile.
-//     The V70 (IS_V70=1) 32-bit external bus is declared but s32_v60_bus still
-//     issues 16-bit cycles; System 32 is V60 only, so the parameter is unused.
+//     Multi 32 selects the V70 architectural profile at runtime. Its 32-bit
+//     external transfers are serialized by s32_v60_bus onto the core's shared
+//     16-bit internal fabric, preserving data/lane behavior but not V70 bus
+//     cycle timing.
 //
 //  Bus: logical access port; unaligned/size handled by s32_v60_bus adapter.
 //============================================================================
@@ -40,6 +42,7 @@ module s32_v60 #(
     input             clk,
     input             ce,            // 16.108 MHz (V60) / 20 MHz (V70) enable
     input             rst,
+    input             is_v70,        // runtime board profile (Multi 32)
 
     // dedicated instruction-fetch port (used only when FAST_IFETCH=1): request an
     // 8-byte line at if_addr; if_data/if_ack return it.  Left unconnected when
@@ -718,7 +721,17 @@ else if (ce) begin
         sbr  <= 32'h0000_0000;
         sycw <= 32'h0000_0070;
         tkcw <= 32'h0000_e000;
-        pir  <= IS_V70 ? 32'h0000_7000 : 32'h0000_6000;
+        // Named-port users written before runtime Multi32 support may leave
+        // is_v70 unconnected. Treat every value except an asserted 1 as V60
+        // in simulation; synthesis reduces this to the expected profile mux.
+        if (IS_V70)
+            pir <= 32'h0000_7000;
+        else begin
+            case (is_v70)
+                1'b1:    pir <= 32'h0000_7000;
+                default: pir <= 32'h0000_6000;
+            endcase
+        end
         psw2 <= 32'h0000_f002;
         isp <= 0; l0sp <= 0; l1sp <= 0; l2sp <= 0; l3sp <= 0;
         trr <= 0;

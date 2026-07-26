@@ -38,7 +38,7 @@ reg         reg_we = 0;
 reg  [5:0]  reg_addr = 0;
 reg  [15:0] reg_wdata = 0;
 reg   [1:0] reg_be = 2'b11;
-reg  [8:0]  disp_x = 0, disp_y = 0;
+reg  [8:0]  line_x = 0, disp_x = 0, disp_y = 0;
 reg         lb_we = 0;
 reg  [2:0]  lb_layer = 0;
 reg  [8:0]  lb_wx = 0;
@@ -54,10 +54,16 @@ s32_linebuf lbuf (
     .clk(clk_ram),
     .lb_we(lb_we), .lb_layer(lb_layer), .lb_wx(lb_wx),
     .lb_wpix(lb_wpix), .lb_bank(lb_bank),
-    .rd_x(disp_x), .rd_bank(disp_y[0]),
+    .rd_x(line_x), .rd_bank(disp_y[0]),
     .px_text(px_text), .px_nbg0(px_nbg0), .px_nbg1(px_nbg1),
     .px_nbg2(px_nbg2), .px_nbg3(px_nbg3), .px_bmp(px_bmp)
 );
+
+// Match s32_core: hcnt addresses the synchronous line memories directly and
+// the mixer receives a one-clk_ram delayed copy. This makes the RAM output for
+// a new coordinate stable before the mixer snapshots its candidates.
+always @(posedge clk_ram)
+    disp_x <= line_x;
 
 s32_mixer mix (
     .clk(clk_ram), .rst(rst),
@@ -96,9 +102,9 @@ endtask
 // step to pixel x and let the pipeline finish (via a dummy x first so the
 // pipeline re-runs even when the same x is sampled twice in a row)
 task px(input [8:0] x);
-    @(posedge clk_ram); disp_x <= 9'd511;
+    @(posedge clk_ram); line_x <= 9'd511;
     repeat (14) @(posedge clk_ram);
-    disp_x <= x;
+    line_x <= x;
     repeat (14) @(posedge clk_ram);
 endtask
 
@@ -189,17 +195,13 @@ initial begin
     wlb(3'd1, 1'b1, 9'd20, 14'h2021);
     wlb(3'd1, 1'b0, 9'd22, 14'h2003);
 
-    // A disp_x transition issues the RAM read first.  The timing-closed mixer
-    // then snapshots candidates and resolves winner/partner/index on three
-    // successive clocks before launching the first palette lookup.
-    @(posedge clk_ram); disp_x <= 9'd511;
+    // The production core delays disp_x by one clk_ram after issuing the line
+    // RAM read. This bench reproduces that relationship with line_x/disp_x,
+    // then checks winner, partner and palette-index stages in succession.
+    @(posedge clk_ram); line_x <= 9'd511;
     repeat (14) @(posedge clk_ram);
-    disp_x <= 9'd10;
-    @(posedge clk_ram); #1;
-    if (mix.launch_pending !== 1'b1 || mix.ph !== 4'hf) begin
-        errors = errors + 1;
-        $display("  FAIL synchronous RAM launch was not deferred by one clock");
-    end
+    line_x <= 9'd10;
+    @(posedge clk_ram);
     @(posedge clk_ram); #1;
     if (mix.winner_pending !== 1'b1 || mix.ph !== 4'hf) begin
         errors = errors + 1;

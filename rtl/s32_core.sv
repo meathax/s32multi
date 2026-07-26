@@ -7,7 +7,11 @@
 import s32_pkg::*;
 
 module s32_core #(
-`ifdef S32_SYSTEM32_ONLY
+`ifdef S32_OUTRUNNERS_ONLY
+    // Dedicated Multi 32 profile takes precedence over the shared QSF's
+    // System32-only default.
+    parameter SYSTEM32_ONLY = 1'b0
+`elsif S32_SYSTEM32_ONLY
     // The SegaS32 Quartus revision sets this macro so Cyclone V only pays for
     // hardware present on a single-screen System 32 board.  A future Multi 32
     // revision leaves the macro unset (or explicitly overrides the parameter).
@@ -143,20 +147,29 @@ module s32_core #(
     output     [89:0] debug_v25_img     // {sweep_done, first_valid, hash[23:0], first_line[63:0]}
 );
 
-`ifdef S32_GOLDENAXE_ONLY
+`ifdef S32_OUTRUNNERS_ONLY
+localparam GOLDENAXE_ONLY = 1'b0;
+localparam OUTRUNNERS_ONLY = 1'b1;
+localparam GAME_ONLY      = 1'b1;
+`elsif S32_GOLDENAXE_ONLY
 localparam GOLDENAXE_ONLY = 1'b1;
+localparam OUTRUNNERS_ONLY = 1'b0;
 localparam GAME_ONLY      = 1'b1;
 `elsif S32_GA2_ONLY
 localparam GOLDENAXE_ONLY = 1'b0;
+localparam OUTRUNNERS_ONLY = 1'b0;
 localparam GAME_ONLY      = 1'b1;
 `elsif S32_HOLO_ONLY
 localparam GOLDENAXE_ONLY = 1'b0;
+localparam OUTRUNNERS_ONLY = 1'b0;
 localparam GAME_ONLY      = 1'b1;
 `elsif S32_JPARK_ONLY
 localparam GOLDENAXE_ONLY = 1'b0;
+localparam OUTRUNNERS_ONLY = 1'b0;
 localparam GAME_ONLY      = 1'b1;
 `else
 localparam GOLDENAXE_ONLY = 1'b0;
+localparam OUTRUNNERS_ONLY = 1'b0;
 localparam GAME_ONLY      = 1'b0;
 `endif
 
@@ -170,6 +183,19 @@ wire       cfg_v25_table         = 1'b0;
 wire       cfg_has_adc           = 1'b0;
 wire       cfg_has_track         = 1'b0;
 wire       cfg_has_ppi           = 1'b1;
+wire       cfg_has_dsp_hle       = 1'b0;
+wire       cfg_dual_pcb          = 1'b0;
+wire [6:0] cfg_prot_sel          = PROT_NONE;
+wire       cfg_sprite_bank_valid = 1'b1;
+wire [1:0] cfg_sprite_bank_mask  = 2'b11;
+wire       cfg_flip_y            = 1'b0;
+`elsif S32_OUTRUNNERS_ONLY
+wire       cfg_multi32           = 1'b1;
+wire       cfg_has_v25           = 1'b0;
+wire       cfg_v25_table         = 1'b0;
+wire       cfg_has_adc           = 1'b1;
+wire       cfg_has_track         = 1'b0;
+wire       cfg_has_ppi           = 1'b0;
 wire       cfg_has_dsp_hle       = 1'b0;
 wire       cfg_dual_pcb          = 1'b0;
 wire [6:0] cfg_prot_sel          = PROT_NONE;
@@ -192,12 +218,11 @@ wire       cfg_flip_y            = board.flip_y;
 `endif
 // A System32-only bitstream must not enter a Multi 32 runtime configuration if
 // it is accidentally paired with a Multi 32 MRA.  The universal source build
-// retains the descriptor-selected path when SYSTEM32_ONLY is false.  GAME_ONLY
-// profiles are dedicated single-screen System 32 builds by definition, so they
-// force the System 32 configuration even if a QSF sets a game macro without
-// S32_SYSTEM32_ONLY (previously that mismatch left is_multi32 following the
-// descriptor while the analog/trackball hardware it implies was compiled out).
-wire is_multi32 = (SYSTEM32_ONLY || GAME_ONLY) ? 1'b0 : cfg_multi32;
+// retains the descriptor-selected path when SYSTEM32_ONLY is false. System 32
+// GAME_ONLY profiles force the single-screen configuration. The dedicated
+// OutRunners profile is the explicit Multi 32 exception and fixes it high.
+wire is_multi32 = OUTRUNNERS_ONLY ? 1'b1 :
+                  (SYSTEM32_ONLY || GAME_ONLY) ? 1'b0 : cfg_multi32;
 
 // ---------------------------------------------------------------------------
 // CPU + bus adapter
@@ -239,7 +264,7 @@ wire        if_ack = if_served;     // held (not pulsed) so the ce-gated CPU nev
  `define FAST_IFETCH_EN 1'b1
 `endif
 s32_v60 #(.START_PC(32'hFFFFFFF0), .FAST_IFETCH(`FAST_IFETCH_EN)) v60 (   // MAME reset PC (audit R20 V60-21)
-    .clk(clk_sys), .ce(ce_cpu), .rst(rst),
+    .clk(clk_sys), .ce(ce_cpu), .rst(rst), .is_v70(is_multi32),
     .if_req(if_req), .if_addr(if_addr), .if_data(if_data), .if_ack(if_ack),
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
@@ -483,15 +508,21 @@ initial begin
     mix_disp_x_cdc = 0;
 end
 
-// clk_sys is a phase-related divide-by-two of clk_ram. Capture CPU/video
-// controls on clk_ram's falling edge so the following rising-edge consumers
-// have a full half-cycle of setup/hold margin.
+// hcnt is produced on the phase-aligned clk_sys rising edge. Register it on
+// clk_ram's rising edge: the mixer consumes the previous value on that edge,
+// giving its change-detect/enable cone a complete 96 MHz cycle. The line RAMs
+// have already sampled the new hcnt by the time the mixer observes this copy,
+// so their old one-clock launch wait can be folded into the transfer.
+always @(posedge clk_ram)
+    mix_disp_x_cdc <= hcnt;
+
+// Quasi-static CPU controls retain the falling-edge capture so their normal
+// rising-edge consumers have half a clk_ram cycle of setup/hold margin.
 always @(negedge clk_ram) begin
     // These are sampling registers, not architectural state. They have
     // explicit power-up values and are overwritten on every falling edge, so
     // a reset mux only creates a long status[0] -> inverted-clk_ram half-cycle
     // path across all 329 bits.
-    mix_disp_x_cdc <= hcnt;
     for (tm_cdc_i = 0; tm_cdc_i < 20; tm_cdc_i = tm_cdc_i + 1)
         tm_clips_cdc[tm_cdc_i] <= w_clips[tm_cdc_i];
 end
@@ -832,28 +863,53 @@ assign sdr_p3_addr = SDR_SOUNDCPU_BASE[24:1] + {1'b0, zrom_ba[23:1]};
 assign sdr_p4_addr = SDR_MULTIPCM_BASE[24:1] + {3'b000, mpcm_ba[21:1]};
 
 // ---------------------------------------------------------------------------
-// IO-7: s32comm share RAM (0x800000-0x800fff).  The regular-PCB machine config
-// instantiates S32COMM (MAME segas32_regular_state::device_add_mconfig), so
-// this window behaves as byte-wide RAM even with no link partner: a game that
-// writes then reads the share area must read its own data back, not open bus.
-// Only D[7:0] is mapped (MAME maps 0x800000-0x800fff share_r/w with
-// umask16 0x00ff); the cn/fg link registers at 0x801000/2 and the rest of the
-// 0x80xxxx page read link-not-connected (0xFFFF, handled in the read mux).
+// IO-7: S32COMM shared RAM + host-side flip-flops. The communication board is
+// present even with no link peer (OutRunners/Stadium Cross use 837-8792 with
+// EPR-15033), so CN/FG are real registers rather than open bus. This models
+// MAME's non-networked device path: the main CPU can enable CN and drive FG,
+// while the absent comm-CPU/link partner leaves ZFG low. Only D[7:0] is mapped.
 // ---------------------------------------------------------------------------
 wire       sel_comm_ram = sel_comm && (A[15:12] == 4'h0);
+wire       sel_comm_cn  = sel_comm && (A[15:0] == 16'h1000);
+wire       sel_comm_fg  = sel_comm && (A[15:0] == 16'h1002);
 reg [7:0]  comm_ram [0:2047];
 reg [7:0]  comm_q;
+reg        comm_cn, comm_fg, comm_zfg;
 integer    comm_init_i;
 initial begin
     for (comm_init_i = 0; comm_init_i < 2048; comm_init_i = comm_init_i + 1)
         comm_ram[comm_init_i] = 8'h00;
     comm_q = 8'h00;
+    comm_cn = 1'b0;
+    comm_fg = 1'b0;
+    comm_zfg = 1'b0;
 end
 always @(posedge clk_sys) begin
     comm_q <= comm_ram[A[11:1]];
     if (m_req && m_we && sel_comm_ram && m_be[0])
         comm_ram[A[11:1]] <= m_wdata[7:0];
+    if (rst) begin
+        comm_cn   <= 1'b0;
+        comm_fg   <= 1'b0;
+        comm_zfg  <= 1'b0;
+    end
+    else if (m_req && m_we && m_be[0]) begin
+        if (sel_comm_cn) begin
+            comm_cn <= m_wdata[0];
+            if (!m_wdata[0]) begin
+                comm_fg  <= 1'b0;
+                comm_zfg <= 1'b0;
+            end
+        end
+        else if (sel_comm_fg && comm_cn)
+            comm_fg <= m_wdata[0];
+    end
 end
+wire [7:0] comm_cn_q = {7'h7f, comm_cn};
+wire [7:0] comm_fg_q = {~comm_zfg, 6'h3f, comm_fg};
+wire [15:0] comm_rdata = sel_comm_ram ? {8'hff, comm_q} :
+                         sel_comm_cn  ? {8'hff, comm_cn_q} :
+                         sel_comm_fg  ? {8'hff, comm_fg_q} : 16'hffff;
 `ifdef SIMULATION
 function automatic [7:0] comm_peek(input [10:0] addr);
     comm_peek = comm_ram[addr];
@@ -945,19 +1001,25 @@ generate
         // Power up at bank 0 to match MAME device_start (m_analog_bank = 0);
         // System 32 analog games never write 0xC00060 so it would otherwise
         // stay X in simulation and undefined at cold boot (audit R20 IO-15).
-        reg [2:0] analog_bank = 3'd0;
+        reg analog_bank = 1'b0;
         s32_msm6253 adc (
             .clk(clk_sys),
             .cs(m_req && sel_adc && m_be[0]), // 0xC00050-57
             .we(m_we), .addr(A[2:1]),
             .dout_bit(adc_bit),
-            .an0(adc_ch[{analog_bank[0], 2'd0}]), .an1(adc_ch[{analog_bank[0], 2'd1}]),
-            .an2(adc_ch[{analog_bank[0], 2'd2}]), .an3(adc_ch[{analog_bank[0], 2'd3}])
+            // MSM6253 inputs 0/1 are fixed ANALOG1/2. Only inputs 2/3 are
+            // banked: bank 0 selects ANALOG3/4, bank 1 ANALOG7/8.
+            .an0(adc_ch[0]), .an1(adc_ch[1]),
+            .an2(adc_ch[analog_bank ? 6 : 2]),
+            .an3(adc_ch[analog_bank ? 7 : 3])
         );
-        always @(posedge clk_sys)
-            if (m_req && m_we && sel_ioex && m_be[0] && is_multi32 &&
-                A[5:0] == 6'h20)
-                analog_bank <= m_wdata[2:0];   // 0xC00060 analog_bank_w
+        always @(posedge clk_sys) begin
+            if (rst)
+                analog_bank <= 1'b0;
+            else if (m_req && m_we && sel_ioex && m_be[0] && is_multi32 &&
+                     A[5:0] == 6'h20)
+                analog_bank <= m_wdata[0];   // 0xC00060 analog_bank_w
+        end
 
         for (t = 0; t < 3; t = t + 1) begin : tracks
             s32_upd4701 upd (
@@ -1443,9 +1505,9 @@ always @(posedge clk_sys) begin
                 is_pal1:     rmux <= pal1_cpu_q;   // B7: Multi 32 screen B
                 is_mix1:     rmux <= mix1_q;
                 sel_shared:  rmux <= sh_rdata;
-                // IO-7: share RAM reads its own byte back (D[15:8] open bus);
-                // cn/fg link registers + rest of the page read not-connected.
-                sel_comm:    rmux <= sel_comm_ram ? {8'hff, comm_q} : 16'hffff;
+                // IO-7: byte-wide share RAM plus S32COMM CN/FG registers;
+                // all other addresses in the page are open bus.
+                sel_comm:    rmux <= comm_rdata;
                 // Open-bus outside the comm RAM (A[15]=0) and the 4-byte id
                 // window (A[15] && A[14:2]==0); the module holds stale rdata
                 // when neither chip-select fires (audit R20 IO-10a).

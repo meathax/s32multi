@@ -119,9 +119,9 @@ wire [31:0] joystick_0, joystick_1, joystick_2, joystick_3, joystick_4, joystick
 wire [15:0] joystick_l_analog_0, joystick_l_analog_1;
 wire  [7:0] paddle_0, paddle_1;
 wire [24:0] ps2_mouse;
-// The Golden Axe RBF has fixed physical board straps. Keep board_desc as the
-// loader output so MRA compatibility checks remain meaningful, but feed the
-// core and top-level pruning decisions from constants in this one revision.
+// Dedicated game RBFs have fixed physical board straps. Keep board_desc as
+// the loader output so MRA compatibility checks remain meaningful, but feed
+// the core and top-level pruning decisions from constants in those revisions.
 always @(*) begin
     active_board = board_desc;
 `ifdef S32_GOLDENAXE_ONLY
@@ -140,6 +140,24 @@ always @(*) begin
     active_board.flip_y           = 1'b0;
     active_board.gun_aim          = 1'b0;
     active_board.coin_swap        = 1'b0;
+    active_board.orunners         = 1'b0;
+`elsif S32_OUTRUNNERS_ONLY
+    active_board.multi32           = 1'b1;
+    active_board.has_v25           = 1'b0;
+    active_board.v25_table         = 1'b0;
+    active_board.has_adc           = 1'b1;
+    active_board.has_track         = 1'b0;
+    active_board.has_ppi           = 1'b0;
+    active_board.has_dsp_hle       = 1'b0;
+    active_board.has_cd_stub       = 1'b0;
+    active_board.dual_pcb          = 1'b0;
+    active_board.prot_sel          = PROT_NONE;
+    active_board.sprite_bank_valid = 1'b1;
+    active_board.sprite_bank_mask  = 2'b11;
+    active_board.flip_y            = 1'b0;
+    active_board.gun_aim           = 1'b0;
+    active_board.coin_swap         = 1'b0;
+    active_board.orunners          = 1'b1;
 `endif
 end
 
@@ -175,7 +193,9 @@ localparam CONF_STR = {
 `endif
     "O[7],Service Mode,Off,On;",
 `ifndef S32_GOLDENAXE_ONLY
+`ifndef S32_OUTRUNNERS_ONLY
     "O[16:15],CPU Turbo,Normal,x2,x3,x4;",
+`endif
 `endif
     "O[12],Pause,Off,On;",
 `ifndef S32_GOLDENAXE_ONLY
@@ -233,8 +253,13 @@ wire pause = status[12];
 // The dedicated release runs the V60 at its authentic 16.10795 MHz cadence.
 // Compile out the runtime multiplier/saturation cone and guarantee that CPU
 // register updates are never on consecutive clk_sys edges, matching the
-// Golden Axe-only two-cycle timing exception in Arcade-SegaSystem32.sdc.
+// fixed-CE timing exception in Arcade-SegaSystem32.sdc.
 wire [15:0] cpu_ce_inc = 16'd21848;
+`elsif S32_OUTRUNNERS_ONLY
+// OutRunners uses the Multi 32 V70 at its authentic fixed 20 MHz cadence.
+// 2*27127 remains below one NCO wrap, so CPU updates are never on consecutive
+// clk_sys edges and the dedicated two-cycle constraint is structurally true.
+wire [15:0] cpu_ce_inc = 16'd27127;
 `else
 // Universal profiles retain the optional V60/V70 multiplier. They receive no
 // blanket CPU multicycle timing exception because Turbo can assert CE on
@@ -457,10 +482,31 @@ sdram sdram (
 ////////////////////////////   FRAMEBUFFER   //////////////////////////////////
 wire        fbw_start, fbw_valid, fbw_end, fbw_shadow, fbw_busy;
 wire        fbe_req, fbe_ack, fbr_req, fbr_ack;
-wire  [1:0] fbw_buf, fbe_buf, fbr_buf;
+wire  [1:0] fbw_buf, fbe_buf, fbr_buf, fbr_buf_core;
 wire  [8:0] fbw_x, fbr_x;
 wire  [7:0] fbw_y, fbe_y, fbr_y;
 wire [15:0] fbw_pix, fbr_pix;
+
+// Multi 32 stores {monitor, front/back} in the four physical sprite buffers.
+// This build presents only one monitor, so steer the one DDR line-fetch port
+// to the OSD-selected screen. Hold that selection for the complete request;
+// changing the OSD cannot redirect the second half of an in-flight burst.
+reg m32_screen_meta, m32_screen_sync, m32_screen_latched;
+always @(posedge clk_ram) begin
+    if (reset) begin
+        m32_screen_meta    <= 1'b0;
+        m32_screen_sync    <= 1'b0;
+        m32_screen_latched <= 1'b0;
+    end
+    else begin
+        m32_screen_meta <= status[6];
+        m32_screen_sync <= m32_screen_meta;
+        if (!fbr_req)
+            m32_screen_latched <= m32_screen_sync;
+    end
+end
+assign fbr_buf = is_multi32 ? {m32_screen_latched, fbr_buf_core[0]}
+                            : fbr_buf_core;
 
 s32_fb_if fb (
     .clk(clk_ram), .rst(reset),
@@ -519,7 +565,18 @@ function automatic [7:0] p_dig(input [31:0] j);
 endfunction
 wire [7:0] p1a_dig = p_dig(joystick_0);
 wire [7:0] sonic_p1a = {p1a_dig[7:3], ~joystick_2[4], p1a_dig[1:0]};
-wire [7:0] core_p1a = (active_board.prot_sel == PROT_SONIC) ? sonic_p1a : p1a_dig;
+// OutRunners splits each station across one 315-5296: P1 contains shift
+// up/down, while P2 contains DJ/back/forward. Monitor B repeats that layout
+// for player 2. Unknown bits remain pulled high as on the cabinet harness.
+wire [7:0] orunners_shift_p1 = ~{6'b0, joystick_0[5], joystick_0[4]};
+wire [7:0] orunners_extra_p1 = ~{5'b0, joystick_0[8], joystick_0[7], joystick_0[6]};
+wire [7:0] orunners_shift_p2 = ~{6'b0, joystick_1[5], joystick_1[4]};
+wire [7:0] orunners_extra_p2 = ~{5'b0, joystick_1[8], joystick_1[7], joystick_1[6]};
+wire [7:0] core_p1a = active_board.orunners ? orunners_shift_p1 :
+                      (active_board.prot_sel == PROT_SONIC) ? sonic_p1a : p1a_dig;
+wire [7:0] core_p2a = active_board.orunners ? orunners_extra_p1 : p_dig(joystick_1);
+wire [7:0] core_p1b = active_board.orunners ? orunners_shift_p2 : p_dig(joystick_2);
+wire [7:0] core_p2b = active_board.orunners ? orunners_extra_p2 : p_dig(joystick_3);
 
 // --- Analog-stick gun aiming (alien3/jpark) --------------------------------
 // The gun channels are MAME IPT_AD_STICK_X/Y: absolute, offset-binary, resting
@@ -579,15 +636,28 @@ always @(posedge clk_sys) begin
     end
 end
 
+wire [7:0] drive_steer_p1 = joystick_0[1] ? 8'h00 :
+                            joystick_0[0] ? 8'hff :
+                            aim_axis(joystick_l_analog_0[7:0], 1'b0);
+wire [7:0] drive_steer_p2 = joystick_1[1] ? 8'h00 :
+                            joystick_1[0] ? 8'hff :
+                            aim_axis(joystick_l_analog_1[7:0], 1'b0);
+wire [7:0] drive_accel_p1 = (paddle_0 != 8'h00) ? paddle_0 :
+                            joystick_0[3] ? 8'hff : 8'h00;
+wire [7:0] drive_accel_p2 = (paddle_1 != 8'h00) ? paddle_1 :
+                            joystick_1[3] ? 8'hff : 8'h00;
+wire [7:0] drive_brake_p1 = (joystick_0[9] || joystick_0[2]) ? 8'hff : 8'h00;
+wire [7:0] drive_brake_p2 = (joystick_1[9] || joystick_1[2]) ? 8'hff : 8'h00;
+
 wire [7:0] adc_ch [0:7];
-assign adc_ch[0] = aim_sm[0];   // P1 gun X (ANALOG1)
-assign adc_ch[1] = aim_sm[1];   // P1 gun Y (ANALOG2)
-assign adc_ch[2] = aim_sm[2];   // P2 gun X (ANALOG3)
-assign adc_ch[3] = aim_sm[3];   // P2 gun Y (ANALOG4)
-assign adc_ch[4] = {paddle_0};
-assign adc_ch[5] = {paddle_1};
-assign adc_ch[6] = 8'h80;
-assign adc_ch[7] = 8'h80;
+assign adc_ch[0] = active_board.orunners ? drive_steer_p1 : aim_sm[0]; // ANALOG1
+assign adc_ch[1] = active_board.orunners ? drive_accel_p1 : aim_sm[1]; // ANALOG2
+assign adc_ch[2] = active_board.orunners ? drive_brake_p1 : aim_sm[2]; // ANALOG3
+assign adc_ch[3] = active_board.orunners ? drive_steer_p2 : aim_sm[3]; // ANALOG4
+assign adc_ch[4] = 8'h00;                                              // ANALOG5
+assign adc_ch[5] = 8'h00;                                              // ANALOG6
+assign adc_ch[6] = active_board.orunners ? drive_accel_p2 : paddle_0;  // ANALOG7
+assign adc_ch[7] = active_board.orunners ? drive_brake_p2 : paddle_1;  // ANALOG8
 
 // trackballs from mouse
 reg        m_dv [0:2];
@@ -658,6 +728,14 @@ wire [7:0] svc12 = ~{(active_board.prot_sel == PROT_SONIC) ? joystick_0[10] : 1'
 // rather than the cabinet Test line, so drive them from the same buttons —
 // physically equivalent to pressing the matching switch on the board.
 wire [7:0] svc34 = ~{2'b00, test_btn, svc_btn, 4'b0000};
+// Multi32's second 315-5296 has its own service/coin/start harness. OutRunners
+// uses these bits for the monitor-B station; the old all-ones tie-off made P2
+// coin and start impossible and hid the second pair of PCB push switches.
+wire test_btn_b = status[7] | joystick_1[12];
+wire svc_btn_b  = joystick_1[13];
+wire [7:0] svc12_b = ~{3'b000, joystick_1[10], 1'b0,
+                        joystick_1[11], test_btn_b, svc_btn_b};
+wire [7:0] svc34_b = ~{2'b00, test_btn_b, svc_btn_b, 4'b0000};
 // GA2's 4-player i8255 port C is MAME EXTRA3 (ppi.in_pc_callback -> "EXTRA3").
 // Base sets: bit0=Start3, bit1=Start4, bits[7:2] unused. The US sets (ga2u,
 // spidmanu, arabfgtu) instead read COIN1 on bit3 (0x08) and COIN2 on bit2
@@ -723,16 +801,16 @@ s32_core core (
     .fb_wr_valid(fbw_valid), .fb_wr_pix(fbw_pix), .fb_wr_end(fbw_end),
     .fb_wr_shadow(fbw_shadow), .fb_wr_busy(fbw_busy),
     .fb_er_req(fbe_req), .fb_er_buf(fbe_buf), .fb_er_y(fbe_y), .fb_er_ack(fbe_ack),
-    .fb_rd_req(fbr_req), .fb_rd_buf(fbr_buf), .fb_rd_y(fbr_y), .fb_rd_ack(fbr_ack),
+    .fb_rd_req(fbr_req), .fb_rd_buf(fbr_buf_core), .fb_rd_y(fbr_y), .fb_rd_ack(fbr_ack),
     .fb_rd_x(fbr_x), .fb_rd_pix(fbr_pix),
     .v25_prg_wr(v25_wr), .v25_prg_waddr(v25_waddr), .v25_prg_wdata(v25_wdata),
     .eep_ld_wr(eep_wr), .eep_ld_addr(eep_waddr), .eep_ld_data(eep_wdata),
     .eep_rd_data(eep_rd_data), .eep_rd_addr(eep_rd_addr),
     .eep_upload(eep_upload), .eep_modified(eep_modified),
-    .in_p1a(core_p1a), .in_p2a(p_dig(joystick_1)),
+    .in_p1a(core_p1a), .in_p2a(core_p2a),
     .in_portc(portc), .in_svc12(svc12), .in_svc34(svc34),
-    .in_p1b(p_dig(joystick_2)), .in_p2b(p_dig(joystick_3)),
-    .in_portc_b(8'hff), .in_svc12_b(8'hff), .in_svc34_b(8'hff),
+    .in_p1b(core_p1b), .in_p2b(core_p2b),
+    .in_portc_b(8'hff), .in_svc12_b(svc12_b), .in_svc34_b(svc34_b),
     .adc_ch(adc_ch),
     .trk_dv(trk_dv_a), .trk_dx(trk_dx_a), .trk_dy(trk_dy_a), .trk_btn(trk_btn),
     .ppi_pa(p_dig(joystick_2)), .ppi_pb(p_dig(joystick_3)), .ppi_pc(ga2_ppi_pc),

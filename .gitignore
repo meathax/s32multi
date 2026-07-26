@@ -74,3 +74,4 @@ serv_req_info.txt
 releases/*.rbf
 output_files/
 __pycache__/
+/mra_goldenaxe_rbf/

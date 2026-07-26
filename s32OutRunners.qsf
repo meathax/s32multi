@@ -1,0 +1,12 @@
+set_global_assignment -name TOP_LEVEL_ENTITY sys_top
+# OutRunners dedicated Multi 32 revision. The shared QSF keeps the proven
+# System32-only release default; S32_OUTRUNNERS_ONLY takes precedence in RTL.
+source Arcade-SegaSystem32.qsf
+set_global_assignment -name VERILOG_MACRO "S32_OUTRUNNERS_ONLY=1"
+set_global_assignment -name VERILOG_MACRO "S32_RELEASE_MINIMAL=1"
+# Move JT12's short history shifts into MLABs. Multi 32 needs both palette
+# banks, so preserving thirteen M10Ks gives this dense revision useful RAM
+# headroom without changing the synthesised FM state machine.
+set_global_assignment -name VERILOG_MACRO "S32_JT12_MLAB_SHIFTS=1"
+
+set_global_assignment -name LAST_QUARTUS_VERSION "17.0.2 Standard Edition"

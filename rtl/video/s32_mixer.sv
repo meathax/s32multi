@@ -178,46 +178,44 @@ end
 reg [6:0] ep_spr_s, ep_text_s, ep_nbg0_s, ep_nbg1_s;
 reg [6:0] ep_nbg2_s, ep_nbg3_s, ep_bmp_s, ep_spr_nom_s;
 
-// Winner select (8-way max), evaluated from the candidate snapshot. Keep the
-// priority key and layer selector together through a balanced tournament. In
-// addition to the winner, retain the three opponents it defeated. The largest
-// of those opponents is the runner-up, so the following pipeline stage needs
-// only two comparisons instead of masking the winner and repeating all seven.
-// Rank makes every non-zero key unique.
+// Winner select (8-way max). Capture the first tournament level on the same
+// edge as the candidate snapshot; each live input then drives only one 7-bit
+// compare/mux. The next edge resolves the two remaining levels. Keeping the
+// priority key and selector together also retains the three opponents defeated
+// by the winner, so runner-up needs only two comparisons. Rank makes every
+// non-zero key unique.
 function automatic [10:0] max_candidate(input [10:0] a, input [10:0] b);
     max_candidate = (a[10:4] > b[10:4]) ? a : b;
 endfunction
 
-wire [10:0] cand_spr  = {ep_spr_s,  4'd6};
-wire [10:0] cand_text = {ep_text_s, 4'd0};
-wire [10:0] cand_nbg0 = {ep_nbg0_s, 4'd1};
-wire [10:0] cand_nbg1 = {ep_nbg1_s, 4'd2};
-wire [10:0] cand_nbg2 = {ep_nbg2_s, 4'd3};
-wire [10:0] cand_nbg3 = {ep_nbg3_s, 4'd4};
-wire [10:0] cand_bmp  = {ep_bmp_s,  4'd5};
+wire [10:0] cand_spr  = {ep_spr,  4'd6};
+wire [10:0] cand_text = {ep_text, 4'd0};
+wire [10:0] cand_nbg0 = {ep_nbg0, 4'd1};
+wire [10:0] cand_nbg1 = {ep_nbg1, 4'd2};
+wire [10:0] cand_nbg2 = {ep_nbg2, 4'd3};
+wire [10:0] cand_nbg3 = {ep_nbg3, 4'd4};
+wire [10:0] cand_bmp  = {ep_bmp,  4'd5};
 wire [10:0] cand_bg   = {ep_bg,     4'd7};
 
-wire p0_left_wins = ep_spr_s  > ep_text_s;
-wire p1_left_wins = ep_nbg0_s > ep_nbg1_s;
-wire p2_left_wins = ep_nbg2_s > ep_nbg3_s;
-wire p3_left_wins = ep_bmp_s  > ep_bg;
-wire [10:0] win_p0  = p0_left_wins ? cand_spr  : cand_text;
-wire [10:0] lose_p0 = p0_left_wins ? cand_text : cand_spr;
-wire [10:0] win_p1  = p1_left_wins ? cand_nbg0 : cand_nbg1;
-wire [10:0] lose_p1 = p1_left_wins ? cand_nbg1 : cand_nbg0;
-wire [10:0] win_p2  = p2_left_wins ? cand_nbg2 : cand_nbg3;
-wire [10:0] lose_p2 = p2_left_wins ? cand_nbg3 : cand_nbg2;
-wire [10:0] win_p3  = p3_left_wins ? cand_bmp  : cand_bg;
-wire [10:0] lose_p3 = p3_left_wins ? cand_bg   : cand_bmp;
+// Candidate ranks are fixed and the left candidate has the higher rank in
+// every pair. Compare only the four hardware priority bits and resolve a tie
+// to the left; this is exactly equivalent to the old 7-bit key comparison but
+// keeps the registered line-RAM output path inside one 96 MHz cycle.
+wire p0_left_wins = ep_spr[6:3]  >= ep_text[6:3];
+wire p1_left_wins = ep_nbg0[6:3] >= ep_nbg1[6:3];
+wire p2_left_wins = ep_nbg2[6:3] >= ep_nbg3[6:3];
+wire p3_left_wins = ep_bmp[6:3]  >= ep_bg[6:3];
+reg [10:0] win_p0_s, lose_p0_s, win_p1_s, lose_p1_s;
+reg [10:0] win_p2_s, lose_p2_s, win_p3_s, lose_p3_s;
 
-wire q0_left_wins = win_p0[10:4] > win_p1[10:4];
-wire q1_left_wins = win_p2[10:4] > win_p3[10:4];
-wire [10:0] win_q0 = q0_left_wins ? win_p0 : win_p1;
-wire [10:0] win_q1 = q1_left_wins ? win_p2 : win_p3;
-wire [10:0] lose_q0_first = q0_left_wins ? lose_p0 : lose_p1;
-wire [10:0] lose_q1_first = q1_left_wins ? lose_p2 : lose_p3;
-wire [10:0] lose_q0_second = q0_left_wins ? win_p1 : win_p0;
-wire [10:0] lose_q1_second = q1_left_wins ? win_p3 : win_p2;
+wire q0_left_wins = win_p0_s[10:4] > win_p1_s[10:4];
+wire q1_left_wins = win_p2_s[10:4] > win_p3_s[10:4];
+wire [10:0] win_q0 = q0_left_wins ? win_p0_s : win_p1_s;
+wire [10:0] win_q1 = q1_left_wins ? win_p2_s : win_p3_s;
+wire [10:0] lose_q0_first = q0_left_wins ? lose_p0_s : lose_p1_s;
+wire [10:0] lose_q1_first = q1_left_wins ? lose_p2_s : lose_p3_s;
+wire [10:0] lose_q0_second = q0_left_wins ? win_p1_s : win_p0_s;
+wire [10:0] lose_q1_second = q1_left_wins ? win_p3_s : win_p2_s;
 
 wire final_left_wins = win_q0[10:4] > win_q1[10:4];
 wire [10:0] win_max = final_left_wins ? win_q0 : win_q1;
@@ -296,9 +294,13 @@ endfunction
 // snapshot. The priority tree then drives only a shallow 8:1 index mux.
 reg [13:0] idx_text_s, idx_nbg0_s, idx_nbg1_s, idx_nbg2_s;
 reg [13:0] idx_nbg3_s, idx_bmp_s, idx_spr_s, idx_bg_s;
+reg [19:0] li_spr_pre;
 reg [13:0] idx_winner, idx_runner;
 always @(*) begin
-    case (bestsel)
+    // Use the registered selector here. The priority tournament is captured
+    // in winner_pending; keeping it out of this address mux removes an
+    // 11-level candidate-to-palette path from the 96 MHz clock domain.
+    case (bestsel_hold)
         4'd0: idx_winner = idx_text_s; 4'd1: idx_winner = idx_nbg0_s;
         4'd2: idx_winner = idx_nbg1_s; 4'd3: idx_winner = idx_nbg2_s;
         4'd4: idx_winner = idx_nbg3_s; 4'd5: idx_winner = idx_bmp_s;
@@ -420,8 +422,8 @@ endfunction
 // arithmetic. Palette port is registered directly on clk_ram; the existing
 // schedule retains ample margin around its one-clock registered address.
 // Pixel period is 12 clk_ram in 416 mode and >= 14 in 320 mode.
-//   T0 (disp_x changes): synchronous line-RAM read is issued
-//   T1: snapshot candidates from the RAM outputs
+//   T0: hcnt/line RAMs update; the registered mixer coordinate still holds x-1
+//   T1 (disp_x changes): snapshot the already-stable RAM outputs
 //   T2: resolve/register winner
 //   T3: resolve/register blend partner
 //   T4: latch the runner palette index and final context
@@ -434,7 +436,6 @@ endfunction
 // ---------------------------------------------------------------------------
 reg [8:0]  dx_d;
 reg [3:0]  ph;
-reg        launch_pending;
 reg        winner_pending;
 reg        second_pending;
 reg        context_pending;
@@ -487,23 +488,15 @@ always @(posedge clk) begin
     pal_data_r <= pal_data;
     if (rst) begin
         ph <= 4'hF;
-        launch_pending <= 1'b0;
         winner_pending <= 1'b0;
         second_pending <= 1'b0;
         context_pending <= 1'b0;
         rgb <= 24'h000000;
     end
     else if (disp_x != dx_d) begin
-        // The line memories sample disp_x on this edge.  Their registered
-        // outputs become visible after the edge, so launch winner selection
-        // on the following clock rather than pairing old pixels with new x.
-        launch_pending <= 1'b1;
-        winner_pending <= 1'b0;
-        second_pending <= 1'b0;
-        context_pending <= 1'b0;
-        ph <= 4'hF;
-    end
-    else if (launch_pending) begin
+        // s32_core registers disp_x one clk_ram edge after the line memories
+        // sample hcnt. Their outputs are therefore already stable here; fold
+        // the former launch_pending wait into that full-cycle transfer.
         ep_spr_s     <= ep_spr;
         ep_text_s    <= ep_text;
         ep_nbg0_s    <= ep_nbg0;
@@ -512,13 +505,25 @@ always @(posedge clk) begin
         ep_nbg3_s    <= ep_nbg3;
         ep_bmp_s     <= ep_bmp;
         ep_spr_nom_s <= ep_spr_nom;
+        win_p0_s  <= p0_left_wins ? cand_spr  : cand_text;
+        lose_p0_s <= p0_left_wins ? cand_text : cand_spr;
+        win_p1_s  <= p1_left_wins ? cand_nbg0 : cand_nbg1;
+        lose_p1_s <= p1_left_wins ? cand_nbg1 : cand_nbg0;
+        win_p2_s  <= p2_left_wins ? cand_nbg2 : cand_nbg3;
+        lose_p2_s <= p2_left_wins ? cand_nbg3 : cand_nbg2;
+        win_p3_s  <= p3_left_wins ? cand_bmp  : cand_bg;
+        lose_p3_s <= p3_left_wins ? cand_bg   : cand_bmp;
         idx_text_s   <= mk_palidx(li_text);
         idx_nbg0_s   <= mk_palidx(li_nbg0);
         idx_nbg1_s   <= mk_palidx(li_nbg1);
         idx_nbg2_s   <= mk_palidx(li_nbg2);
         idx_nbg3_s   <= mk_palidx(li_nbg3);
         idx_bmp_s    <= mk_palidx(li_bmp);
-        idx_spr_s    <= mk_palidx(li_spr);
+        // The sprite source is the DDR line buffer and has larger RAM-output
+        // skew than tile line buffers. Snapshot its compact palette fields
+        // here; perform the shift/add on the otherwise independent winner
+        // edge so this path remains single-cycle without lengthening a pixel.
+        li_spr_pre   <= li_spr;
         idx_bg_s     <= mk_palidx(li_bg);
         spr_group_raw_s <= spr_group_raw;
         spr_shadow_src_s <= spr_shadow_src;
@@ -528,20 +533,18 @@ always @(posedge clk) begin
         r4c15_s <= r4c[15];
         layer_color_flags_s <= layer_color_flags;
         act_hold <= disp_active & display_en;
-        launch_pending <= 1'b0;
         winner_pending <= 1'b1;
+        second_pending <= 1'b0;
+        context_pending <= 1'b0;
+        ph <= 4'hF;
     end
     else if (winner_pending) begin
+        idx_spr_s <= mk_palidx(li_spr_pre);
         best_hold <= best;
         bestsel_hold <= bestsel;
         runner_first_hold <= win_loser_first;
         runner_second_hold <= win_loser_second;
         runner_final_hold <= win_loser_final;
-        // The candidate snapshot already makes the winner and its palette
-        // index stable. Start the registered palette lookup here, two stages
-        // before P0, leaving ample latency before first_pal is retained at P2.
-        pal_addr_r <= idx_winner;
-
         winner_pending <= 1'b0;
         second_pending <= 1'b1;
     end
@@ -555,6 +558,10 @@ always @(posedge clk) begin
         // redundant 7-bit comparisons from the path toward idx2_hold.
         best2_hold    <= best2;
         best2sel_hold <= best2sel;
+        // bestsel_hold was captured on the preceding edge, so this is now a
+        // shallow registered-selector index mux. The synchronous palette read
+        // still completes well before first_pal is retained at P2.
+        pal_addr_r <= idx_winner;
         second_pending <= 1'b0;
         context_pending <= 1'b1;
     end

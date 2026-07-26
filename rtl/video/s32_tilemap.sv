@@ -100,6 +100,7 @@ reg [63:0] row;
 reg [15:0] rowscroll_add;
 reg [8:0]  rowselect_y;
 reg        use_rowsel;
+reg        bmp_clip_hold;
 
 // NBG0/1 use MAME's exact (0x200 << 20)/zoom calculation on both axes.
 // A shared restoring divider keeps that work off the 96.6 MHz render path.
@@ -468,6 +469,11 @@ always @(posedge clk) begin
             logic [8:0] bx, by;
             bx = x[8:0] + r1ff88[8:0];
             by = line + r1ff8a[8:0];
+            // Clip geometry depends only on the destination coordinate and
+            // registers, not on VRAM. Resolve it while issuing the read so the
+            // synchronous VRAM output later drives only pen selection/opacity.
+            bmp_clip_hold <= clip_vis(x[8:0], line,
+                                      r1ff02[15], r1ff02[10], 5'b10000);
             if (r1ff00[11]) // 8bpp
                 vram_addr <= {by[7:0], bx[8:1]};
             else
@@ -488,12 +494,10 @@ always @(posedge clk) begin
             lb_x     <= x[8:0];
             // bitmap clip: $1FF02 bit15 enable / bit10 clip-out, rect 4 only
             if (r1ff00[11])
-                lb_pix <= {(|pen8) && clip_vis(x[8:0], line,
-                              r1ff02[15], r1ff02[10], 5'b10000),
+                lb_pix <= {(|pen8) && bmp_clip_hold,
                            r1ff8c[8:4], pen8};                   // 8bpp
             else
-                lb_pix <= {(|pen8[3:0]) && clip_vis(x[8:0], line,
-                              r1ff02[15], r1ff02[10], 5'b10000),
+                lb_pix <= {(|pen8[3:0]) && bmp_clip_hold,
                            r1ff8c[8:0], pen8[3:0]};              // 4bpp
             if (x == hpix-1) tst <= T_DONE;
             else begin x <= x + 1'd1; tst <= T_BMP; end

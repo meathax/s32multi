@@ -51,31 +51,38 @@ set_multicycle_path -hold -end -from [get_clocks SDRAM_CLK] \
 
 }
 
-# The dedicated Golden Axe profile compiles out CPU Turbo and uses a fixed
-# 16.10795 MHz NCO. Its CE pulses are separated by at least one idle clk_sys
-# edge, so internal V60 register-to-register paths have a real two-cycle
-# requirement. Universal revisions retain Turbo and must remain single-cycle.
+# Dedicated Golden Axe and OutRunners profiles compile out CPU Turbo and use
+# fixed 16.10795/20 MHz NCOs. Their CE pulses are separated by at least one
+# idle clk_sys edge, so internal V60/V70 register-to-register paths have a real
+# two-cycle requirement. Universal revisions retain Turbo and must remain
+# single-cycle.
 set s32_revision ""
 if {[llength [info commands get_current_revision]] > 0} {
     set s32_revision [get_current_revision]
 }
-set s32_ga_fixed_ce [string equal $s32_revision "s32GoldenAxe"]
+set s32_ga_fixed_ce  [string equal $s32_revision "s32GoldenAxe"]
+set s32_out_fixed_ce [string equal $s32_revision "s32OutRunners"]
+set s32_cpu_fixed_ce [expr {$s32_ga_fixed_ce || $s32_out_fixed_ce}]
 
-if {$s32_ga_fixed_ce} {
+if {$s32_cpu_fixed_ce} {
     set v60_regs [get_registers -nowarn {*|s32_v60:v60|*}]
-    if {[s32_require [expr {[get_collection_size $v60_regs] > 0}] "V60 registers for the Golden Axe fixed-CE constraint"]} {
+    if {[s32_require [expr {[get_collection_size $v60_regs] > 0}] "V60/V70 registers for the dedicated fixed-CE constraint"]} {
         set_multicycle_path -setup 2 -from $v60_regs -to $v60_regs
         set_multicycle_path -hold 1 -from $v60_regs -to $v60_regs
 
-        # Generic V60 builds retain the optional FP state machine. The Golden
-        # Axe no-FP profile normally has no fp_a registers; absence is expected,
-        # not a reason to abort map/STA.
-        set v60_fp_a [get_registers -nowarn {*|s32_v60:v60|fp_a[*]}]
-        if {[get_collection_size $v60_fp_a] > 0} {
-            set_multicycle_path -setup 3 -from $v60_fp_a -to $v60_regs
-            set_multicycle_path -hold 2 -from $v60_fp_a -to $v60_regs
-        } else {
-            post_message -type info "s32 SDC: Golden Axe no-FP profile has no fp_a registers"
+        # Golden Axe's slower 16.10795 MHz NCO guarantees at least three
+        # clk_sys edges between CPU updates, so its optional FP accumulator
+        # path has the corresponding real requirement. OutRunners' 20 MHz V70
+        # can update after two edges and deliberately receives no 3-cycle FP
+        # exception.
+        if {$s32_ga_fixed_ce} {
+            set v60_fp_a [get_registers -nowarn {*|s32_v60:v60|fp_a[*]}]
+            if {[get_collection_size $v60_fp_a] > 0} {
+                set_multicycle_path -setup 3 -from $v60_fp_a -to $v60_regs
+                set_multicycle_path -hold 2 -from $v60_fp_a -to $v60_regs
+            } else {
+                post_message -type info "s32 SDC: Golden Axe no-FP profile has no fp_a registers"
+            }
         }
     }
 } else {

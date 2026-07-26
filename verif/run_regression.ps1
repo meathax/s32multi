@@ -403,10 +403,14 @@ try {
     Write-Tier 1 "full-core lint compile (universal + System32-only profile)"
     Run-HdlTest "t01_lint_universal" "tb_core_lint" ($FullCoreSources + "verif/common/tb_core_lint.sv") "CORE UNIVERSAL LINT PASS" @("SIMULATION")
     Run-HdlTest "t01_lint_holo" "tb_core_lint" ($FullCoreSources + "verif/common/tb_core_lint.sv") "CORE HOLO PROFILE LINT PASS" @("SIMULATION", "S32_SYSTEM32_ONLY", "S32_HOLO_ONLY")
+    Run-HdlTest "t01_lint_orunners" "tb_core_lint" ($FullCoreSources + "verif/common/tb_core_lint.sv") "CORE OUTRUNNERS PROFILE LINT PASS" @("SIMULATION", "S32_SYSTEM32_ONLY", "S32_OUTRUNNERS_ONLY", "S32_RELEASE_MINIMAL")
     Write-RunLine "CORE BUILD PROFILES: PASS"
 
     Write-Tier 2 "V60 smoke test"
     Run-HdlTest "t02_v60_smoke" "tb_v60_smoke" ($V60Sources + "verif/v60/tb_v60_smoke.sv") "SMOKE PASS"
+    Run-HdlTest "t02_v70_profile" "tb_v70_profile" @(
+        "rtl/cpu/v60/s32_v60.sv", "verif/v60/tb_v70_profile.sv"
+    ) "V70 PROFILE PASS"
 
     Write-Tier 3 "V60 directed suite"
     Run-HdlTest "t03_v60_directed" "tb_v60_directed" ($V60Sources + "verif/v60/tb_v60_directed.sv") "DIRECTED PASS"
@@ -414,6 +418,7 @@ try {
     Write-Tier 4 "full-core integration boot (universal + System32-only profile)"
     Run-HdlTest "t04_boot_universal" "tb_core_boot" ($FullCoreSources + "verif/common/tb_core_boot.sv") "CORE BOOT PASS" @("SIMULATION") @("-novopt")
     Run-HdlTest "t04_boot_holo" "tb_core_boot" ($FullCoreSources + "verif/common/tb_core_boot.sv") "CORE BOOT PASS" @("SIMULATION", "S32_SYSTEM32_ONLY", "S32_HOLO_ONLY") @("-novopt")
+    Run-HdlTest "t04_boot_orunners" "tb_core_boot" ($FullCoreSources + "verif/common/tb_core_boot.sv") "CORE BOOT PASS" @("SIMULATION", "S32_SYSTEM32_ONLY", "S32_OUTRUNNERS_ONLY", "S32_RELEASE_MINIMAL") @("-novopt")
     Write-RunLine "CORE BUILD-PROFILE BOOTS: PASS"
 
     Write-Tier 5 "V60 differential co-sim vs independent reference ($Seeds seeds)"

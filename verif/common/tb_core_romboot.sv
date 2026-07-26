@@ -36,21 +36,38 @@ always #5.175 clk_ram = ~clk_ram;
 always @(posedge clk_sys) clk_v25 <= ~clk_v25;
 
 // clock enables
-reg ce_cpu = 0;  reg [1:0] cdiv = 0;
+reg sim_multi32 = 0;
+reg ce_cpu = 0;  reg [15:0] cpu_acc = 0;
 always @(posedge clk_sys) begin
-    cdiv <= (cdiv == 2) ? 2'd0 : cdiv + 1'd1;
-    ce_cpu <= (cdiv == 0);
+    logic [16:0] cpu_sum;
+    if (rst) begin
+        cpu_acc <= 16'd0;
+        ce_cpu <= 1'b0;
+    end else begin
+        // 16.10795 MHz V60 or 20 MHz V70, matching the production NCO.
+        cpu_sum = cpu_acc + (sim_multi32 ? 16'd27127 : 16'd21848);
+        ce_cpu <= cpu_sum[16];
+        cpu_acc <= cpu_sum[15:0];
+    end
 end
-reg ce_z80 = 0;  reg [2:0] zdiv = 0;
+reg ce_z80 = 0;  reg [15:0] z80_acc = 0;
 always @(posedge clk_sys) begin
-    zdiv <= (zdiv == 5) ? 3'd0 : zdiv + 1'd1;
-    ce_z80 <= (zdiv == 0);
+    logic [16:0] z80_sum;
+    if (rst) begin
+        z80_acc <= 16'd0;
+        ce_z80 <= 1'b0;
+    end else begin
+        // 8.053975 MHz System32 or 8 MHz Multi32.
+        z80_sum = z80_acc + (sim_multi32 ? 16'd10851 : 16'd10924);
+        ce_z80 <= z80_sum[16];
+        z80_acc <= z80_sum[15:0];
+    end
 end
 reg ce_fm = 0; reg [15:0] fm_acc = 0;
 always @(posedge clk_sys) begin
     logic [16:0] fm_sum;
     // Mirror the production free-running FM NCO, including while rst is high.
-    fm_sum = fm_acc + 17'd10924;
+    fm_sum = fm_acc + (sim_multi32 ? 16'd10851 : 16'd10924);
     ce_fm <= fm_sum[16];
     fm_acc <= fm_sum[15:0];
 end
@@ -62,8 +79,8 @@ always @(posedge clk_sys) begin
         ce_pcm <= 1'b0;
     end
     else begin
-        // 12.5 MHz / 48.317307 MHz, identical to the production top-level NCO.
-        pcm_sum = pcm_acc + 17'd16955;
+        // 12.5 MHz System32 or 10 MHz Multi32, matching production.
+        pcm_sum = pcm_acc + (sim_multi32 ? 16'd13564 : 16'd16955);
         ce_pcm <= pcm_sum[16];
         pcm_acc <= pcm_sum[15:0];
     end
@@ -80,6 +97,7 @@ initial begin
     if (!$value$plusargs("B1=%h", b1)) b1 = 0;
     if (!$value$plusargs("B2=%h", b2)) b2 = 0;
     if (!$value$plusargs("SBM=%h", sbm)) sbm = 3;
+    sim_multi32 = b0[0];
     board = '0;
     board.multi32     = b0[0];
     board.has_v25     = b0[1];
@@ -88,7 +106,11 @@ initial begin
     board.has_track   = b0[4];
     board.has_ppi     = b0[5];
     board.has_dsp_hle = b0[6];
+    board.dual_pcb    = b1[0];
     board.flip_y      = b1[1];
+    board.gun_aim     = b1[2];
+    board.coin_swap   = b1[3];
+    board.orunners    = b1[4];
     board.prot_sel    = b2[6:0];
     board.sprite_bank_valid = 1'b1;
     board.sprite_bank_mask  = sbm[1:0];
@@ -1264,27 +1286,34 @@ initial begin
         $fatal(1, "ROMBOOT P1 digital event was never returned on P1A");
 `ifdef S32_REAL_FB_SIM
     if (fb_deadline_fail)
-        $fatal(1, "GA2 production framebuffer reported a service deadline failure");
-    if (fb_ddr_writes == 0 || fb_ddr_reads == 0)
-        $fatal(1, "GA2 DDR traffic missing: writes=%0d reads=%0d",
+        $fatal(1, "ROMBOOT production framebuffer reported a service deadline failure");
+    if (fb_ddr_reads == 0)
+        $fatal(1, "ROMBOOT DDR read traffic missing");
+    if (b0 == 8'h22 && fb_ddr_writes == 0)
+        $fatal(1, "GA2 DDR write traffic missing: writes=%0d reads=%0d",
                fb_ddr_writes, fb_ddr_reads);
     if (fb_line_acks < frames * 128)
-        $fatal(1, "GA2 framebuffer line service too sparse: acks=%0d frames=%0d",
+        $fatal(1, "ROMBOOT framebuffer line service too sparse: acks=%0d frames=%0d",
                fb_line_acks, frames);
-    if (b2 != 1 && frames >= 70 && spr_px == 0)
+    if (b0 == 8'h22 && b2 != 1 && frames >= 70 && spr_px == 0)
         $fatal(1, "GA2 reached gameplay window without any sprite pixels");
     if (frame_sig_x != 0)
-        $fatal(1, "GA2 active-video signature contained X on %0d frames",
+        $fatal(1, "ROMBOOT active-video signature contained X on %0d frames",
                frame_sig_x);
-    if (b2 != 1 && frames >= 70 && frame_sig_samples < 10)
+    if (b0 == 8'h22 && b2 != 1 && frames >= 70 && frame_sig_samples < 10)
         $fatal(1, "GA2 active-video signature window was not exercised");
-    if (b2 != 1 && frames >= 90 && frame_sig_changes < 3)
+    if (b0 == 8'h22 && b2 != 1 && frames >= 90 && frame_sig_changes < 3)
         $fatal(1, "GA2 active video stopped changing: samples=%0d changes=%0d",
                frame_sig_samples, frame_sig_changes);
-    $display("GA2 DDR QUALIFICATION PASS writes=%0d reads=%0d line_acks=%0d max_wr=%0d max_rd=%0d max_er=%0d sig_samples=%0d sig_changes=%0d",
-        fb_ddr_writes, fb_ddr_reads, fb_line_acks,
-        fb_max_wr_wait, fb_max_rd_wait, fb_max_er_wait,
-        frame_sig_samples, frame_sig_changes);
+    if (b0 == 8'h22)
+        $display("GA2 DDR QUALIFICATION PASS writes=%0d reads=%0d line_acks=%0d max_wr=%0d max_rd=%0d max_er=%0d sig_samples=%0d sig_changes=%0d",
+            fb_ddr_writes, fb_ddr_reads, fb_line_acks,
+            fb_max_wr_wait, fb_max_rd_wait, fb_max_er_wait,
+            frame_sig_samples, frame_sig_changes);
+    else
+        $display("ROMBOOT DDR PASS writes=%0d reads=%0d line_acks=%0d max_wr=%0d max_rd=%0d max_er=%0d",
+            fb_ddr_writes, fb_ddr_reads, fb_line_acks,
+            fb_max_wr_wait, fb_max_rd_wait, fb_max_er_wait);
 `endif
     $display("ROMBOOT DONE");
     $finish;

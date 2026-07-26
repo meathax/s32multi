@@ -15,10 +15,19 @@ iverilog -g2012 -DSIMULATION -DS32_SYSTEM32_ONLY -DS32_GA2_ONLY -o /tmp/s32_lint
   rtl/audio/s32_audio_mix.sv rtl/audio/s32_soundsys.sv rtl/io/s32_io.sv rtl/prot/s32_prot.sv \
   verif/common/jt12_stub.v rtl/s32_core.sv verif/common/tb_core_lint.sv
 vvp /tmp/s32_lint_s32 | grep -q "CORE S32-ONLY LINT PASS" && echo "CORE BUILD PROFILES: PASS" || { echo "CORE S32-ONLY LINT: FAIL"; exit 1; }
+iverilog -g2012 -DSIMULATION -DS32_SYSTEM32_ONLY -DS32_OUTRUNNERS_ONLY -DS32_RELEASE_MINIMAL -o /tmp/s32_lint_orunners \
+  rtl/s32_pkg.sv rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv \
+  rtl/video/*.sv rtl/audio/s32_rf5c68.sv rtl/audio/s32_multipcm.sv \
+  rtl/audio/s32_audio_mix.sv rtl/audio/s32_soundsys.sv rtl/io/s32_io.sv rtl/prot/s32_prot.sv \
+  verif/common/jt12_stub.v rtl/s32_core.sv verif/common/tb_core_lint.sv
+vvp /tmp/s32_lint_orunners | grep -q "CORE OUTRUNNERS PROFILE LINT PASS" || { echo "CORE OUTRUNNERS PROFILE LINT: FAIL"; exit 1; }
 echo "[2/35] V60 smoke test"
 iverilog -g2012 -o /tmp/s32_v60_smoke \
   rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv verif/v60/tb_v60_smoke.sv
 vvp /tmp/s32_v60_smoke | grep -q "SMOKE PASS" && echo "V60 SMOKE: PASS" || { echo "V60 SMOKE: FAIL"; exit 1; }
+iverilog -g2012 -o /tmp/s32_v70_profile \
+  rtl/cpu/v60/s32_v60.sv verif/v60/tb_v70_profile.sv
+vvp /tmp/s32_v70_profile | grep -q "V70 PROFILE PASS" && echo "V70 PROFILE: PASS" || { echo "V70 PROFILE: FAIL"; exit 1; }
 echo "[3/35] V60 directed suite"
 iverilog -g2012 -o /tmp/s32_v60_dir \
   rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv verif/v60/tb_v60_directed.sv
@@ -36,6 +45,12 @@ iverilog -g2012 -DSIMULATION -DS32_SYSTEM32_ONLY -DS32_GA2_ONLY -o /tmp/s32_boot
   rtl/audio/s32_audio_mix.sv rtl/audio/s32_soundsys.sv rtl/io/s32_io.sv rtl/prot/s32_prot.sv \
   verif/common/jt12_stub.v rtl/s32_core.sv verif/common/tb_core_boot.sv
 vvp /tmp/s32_boot_s32 | grep -q "CORE BOOT PASS" && echo "CORE BUILD-PROFILE BOOTS: PASS" || { echo "CORE S32-ONLY BOOT: FAIL"; exit 1; }
+iverilog -g2012 -DSIMULATION -DS32_SYSTEM32_ONLY -DS32_OUTRUNNERS_ONLY -DS32_RELEASE_MINIMAL -o /tmp/s32_boot_orunners \
+  rtl/s32_pkg.sv rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv \
+  rtl/video/*.sv rtl/audio/s32_rf5c68.sv rtl/audio/s32_multipcm.sv \
+  rtl/audio/s32_audio_mix.sv rtl/audio/s32_soundsys.sv rtl/io/s32_io.sv rtl/prot/s32_prot.sv \
+  verif/common/jt12_stub.v rtl/s32_core.sv verif/common/tb_core_boot.sv
+vvp /tmp/s32_boot_orunners | grep -q "CORE BOOT PASS" || { echo "CORE OUTRUNNERS BOOT: FAIL"; exit 1; }
 echo "[5/35] V60 differential co-sim vs independent reference (50 seeds)"
 sh verif/cosim/run_diff.sh 50
 echo "[6/35] full-core soak / simulator-tier acceptance (extended multi-frame)"

@@ -175,6 +175,7 @@ always @(posedge clk) begin
                             desc_r.flip_y            <= desc_bytes[1][1];
                             desc_r.gun_aim           <= desc_bytes[1][2];
                             desc_r.coin_swap         <= desc_bytes[1][3];
+                            desc_r.orunners          <= desc_bytes[1][4];
                         end
                     end
                     else if (a >= OFF_MCU && a < OFF_SPRITES) begin
@@ -224,6 +225,7 @@ always @(posedge clk) begin
                             desc_r.flip_y            <= desc_bytes[1][1];
                             desc_r.gun_aim           <= desc_bytes[1][2];
                             desc_r.coin_swap         <= desc_bytes[1][3];
+                            desc_r.orunners          <= desc_bytes[1][4];
                         end
                     end
                     else if (a >= OFF_MCU && a < OFF_SPRITES) begin

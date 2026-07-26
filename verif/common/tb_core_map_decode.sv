@@ -12,7 +12,7 @@ module tb_core_map_decode;
     wire dv [0:2];
     wire signed [8:0] dx [0:2], dy [0:2];
     wire [7:0] tb [0:2];
-    for (genvar i=0;i<8;i++) assign adc[i] = 8'h80;
+    for (genvar i=0;i<8;i++) assign adc[i] = 8'h10 + i;
     for (genvar i=0;i<3;i++) begin
         assign dv[i]=0; assign dx[i]=0; assign dy[i]=0; assign tb[i]=8'hff;
     end
@@ -86,8 +86,8 @@ module tb_core_map_decode;
         expect_decode(24'ha00ffe, 0,0,0,0,0,1);
         expect_decode(24'ha01000, 0,0,0,0,0,0);
 
-        // IO-7: s32comm share RAM occupies 0x800000-0x800fff only; the cn/fg
-        // link registers at 0x801000+ are in the comm page but not share RAM.
+        // IO-7: s32comm share RAM occupies 0x800000-0x800fff only. CN/FG are
+        // byte-wide host flip-flops at 0x801000/2; all other addresses are open.
         probe = 24'h800000; #1;
         if (core.sel_comm !== 1'b1 || core.sel_comm_ram !== 1'b1) begin
             $display("FAIL comm share @800000 comm=%b ram=%b", core.sel_comm, core.sel_comm_ram);
@@ -103,6 +103,55 @@ module tb_core_map_decode;
             $display("FAIL comm reg @801000 comm=%b ram=%b", core.sel_comm, core.sel_comm_ram);
             errors = errors + 1;
         end
+        if (core.comm_rdata !== 16'hfffe) begin
+            $display("FAIL comm CN reset read=%04x", core.comm_rdata);
+            errors = errors + 1;
+        end
+        probe = 24'h801002; #1;
+        if (core.comm_rdata !== 16'hfffe) begin
+            $display("FAIL comm FG reset read=%04x", core.comm_rdata);
+            errors = errors + 1;
+        end
+
+        // Multi32 adds palette/mixer B, the second I/O chip, and the exact
+        // MSM6253 bank mux: channels 0/1 fixed, only 2/3 switch to ANALOG7/8.
+        bd.multi32 = 1'b1;
+        bd.has_adc = 1'b1;
+        probe = 24'h680000; #1;
+        if (!core.is_pal1 || core.is_pal0) begin
+            $display("FAIL Multi32 palette B decode");
+            errors = errors + 1;
+        end
+        probe = 24'h690000; #1;
+        if (!core.is_mix1 || core.is_mix0) begin
+            $display("FAIL Multi32 mixer B decode");
+            errors = errors + 1;
+        end
+        probe = 24'hc80000; #1;
+        if (!core.sel_io1 || core.sel_io0) begin
+            $display("FAIL Multi32 I/O B decode");
+            errors = errors + 1;
+        end
+
+        force core.g_extended_analog.analog_bank = 1'b0;
+        #1;
+        if (core.g_extended_analog.adc.an0 !== 8'h10 ||
+            core.g_extended_analog.adc.an1 !== 8'h11 ||
+            core.g_extended_analog.adc.an2 !== 8'h12 ||
+            core.g_extended_analog.adc.an3 !== 8'h13) begin
+            $display("FAIL Multi32 ADC bank 0 mux");
+            errors = errors + 1;
+        end
+        force core.g_extended_analog.analog_bank = 1'b1;
+        #1;
+        if (core.g_extended_analog.adc.an0 !== 8'h10 ||
+            core.g_extended_analog.adc.an1 !== 8'h11 ||
+            core.g_extended_analog.adc.an2 !== 8'h16 ||
+            core.g_extended_analog.adc.an3 !== 8'h17) begin
+            $display("FAIL Multi32 ADC bank 1 mux");
+            errors = errors + 1;
+        end
+        release core.g_extended_analog.analog_bank;
 
         if (errors == 0) $display("CORE MAP DECODE PASS");
         else $fatal(1, "CORE MAP DECODE FAIL (%0d errors)", errors);

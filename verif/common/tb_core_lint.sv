@@ -37,7 +37,14 @@ module tb_core_lint;
     // the resource-constrained SegaS32 revision.
     initial begin
         #1; // allow continuous assignments to settle on event-strict simulators
-`ifdef S32_SYSTEM32_ONLY
+`ifdef S32_OUTRUNNERS_ONLY
+        if (core.SYSTEM32_ONLY !== 1'b0) $fatal(1, "OutRunners profile retained System32 pruning");
+        if (core.WRAM_WORDS != 65536)    $fatal(1, "OutRunners work RAM is not 64K x 16");
+        if (core.is_multi32 !== 1'b1)    $fatal(1, "OutRunners profile did not select Multi 32");
+        if (core.OUTRUNNERS_ONLY !== 1'b1 || core.GAME_ONLY !== 1'b1)
+            $fatal(1, "OutRunners release pruning not enabled");
+        $display("CORE OUTRUNNERS PROFILE LINT PASS");
+`elsif S32_SYSTEM32_ONLY
         if (core.SYSTEM32_ONLY !== 1'b1) $fatal(1, "System32 profile parameter not enabled");
         if (core.WRAM_WORDS != 32768)    $fatal(1, "System32 work RAM is not 32K x 16");
         if (core.is_multi32 !== 1'b0)   $fatal(1, "System32 profile accepted Multi 32 mode");

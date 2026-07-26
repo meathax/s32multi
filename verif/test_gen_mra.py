@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 from xml.etree import ElementTree
 
-from tools.gen_mra import BUTTONS, GAMES
+from tools.gen_mra import BUTTONS, GAMES, RBF_BY_PARENT
 
 
 class BoardDescriptorTests(unittest.TestCase):
@@ -26,8 +26,25 @@ class BoardDescriptorTests(unittest.TestCase):
         # a non-gun analog board (radm steering) must NOT default-invert
         self.assertEqual(bytearray(GAMES["radm"])[1] & 0x04, 0x00)
 
+    def test_outrunners_selects_two_station_wiring(self) -> None:
+        descriptor = bytearray(GAMES["orunners"])
+        self.assertEqual(descriptor[0] & 0x09, 0x09)  # Multi32 + ADC
+        self.assertEqual(descriptor[1] & 0x10, 0x10)  # OutRunners wiring
+        self.assertEqual(RBF_BY_PARENT["orunners"], "s32OutRunners")
+        qsf = (Path(__file__).parents[1] / "s32OutRunners.qsf").read_text(encoding="utf-8")
+        self.assertIn('VERILOG_MACRO "S32_OUTRUNNERS_ONLY=1"', qsf)
+        self.assertIn('VERILOG_MACRO "S32_RELEASE_MINIMAL=1"', qsf)
+        self.assertIn('VERILOG_MACRO "S32_JT12_MLAB_SHIFTS=1"', qsf)
+
 
 class ButtonMetadataTests(unittest.TestCase):
+    def test_outrunners_exposes_cabinet_controls(self) -> None:
+        names, defaults = BUTTONS["orunners"]
+        self.assertEqual(names.split(",")[:6],
+                         ["Shift Up", "Shift Down", "DJ Music",
+                          "Music Back", "Music Forward", "Brake"])
+        self.assertEqual(len(defaults.split(",")), 10)
+
     def test_spiderman_has_two_action_buttons_and_system_controls(self) -> None:
         names, defaults = BUTTONS["spidman"]
         self.assertEqual(names.split(","),

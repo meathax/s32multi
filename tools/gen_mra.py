@@ -39,15 +39,18 @@ REGION_INDEX = dict(zip(STREAM_ORDER, range(4, 10)))
 # board descriptor per parent (DESIGN.md §3.4):
 #   b0: flags {multi32,v25,v25table,adc,track,ppi,dsp_hle,cd_stub}
 #   b1: bit0=dual_pcb, bit1=vertical orientation flip, bit2=positional-gun
-#       analog default-invert (alien3/jpark)
+#       analog default-invert (alien3/jpark), bit3=coin swap,
+#       bit4=OutRunners two-station I/O/analog wiring
 #   b2: prot_sel
 #   b3: bit7=physical sprite-bank metadata valid; bits1:0=bank mask
 PROT = dict(NONE=0, SONIC=1, BRIVAL=2, DARKEDGE=3, F1LAP=4, DBZVRVS=5, JLEAGUE=6)
 def desc(multi32=0, v25=0, v25table=0, adc=0, track=0, ppi=0, dsp=0, cd=0,
-         dual=0, flip_y=0, prot=0, gun=0, coin_swap=0):
+         dual=0, flip_y=0, prot=0, gun=0, coin_swap=0, orunners=0):
     b0 = (multi32 | v25 << 1 | v25table << 2 | adc << 3 | track << 4 |
           ppi << 5 | dsp << 6 | cd << 7)
-    d = bytes([b0, dual | (flip_y << 1) | (gun << 2) | (coin_swap << 3), prot]) + bytes(61)
+    b1 = (dual | (flip_y << 1) | (gun << 2) | (coin_swap << 3) |
+          (orunners << 4))
+    d = bytes([b0, b1, prot]) + bytes(61)
     return d
 
 GAMES = {
@@ -74,7 +77,7 @@ GAMES = {
     "svf":      desc(),
     "jleague":  desc(prot=PROT["JLEAGUE"]),
     "harddunk": desc(multi32=1, ppi=1),
-    "orunners": desc(multi32=1, adc=1),
+    "orunners": desc(multi32=1, adc=1, orunners=1),
     "scross":   desc(multi32=1, adc=1),
     "titlef":   desc(multi32=1),
 }
@@ -99,10 +102,15 @@ BUTTONS = {
         "Attack,Jump,-,-,-,-,Start,Coin,Test,Service",
         "A,B,Start,Select,R,L",
     ),
+    "orunners": (
+        "Shift Up,Shift Down,DJ Music,Music Back,Music Forward,Brake,Start,Coin,Test,Service",
+        "A,B,X,Y,L,R,Start,Select,-,-",
+    ),
 }
 
-BUTTON_COUNTS = {"ga2": 3, "jpark": 1, "alien3": 2, "spidman": 2}
-RBF_BY_PARENT = {"ga2": "s32GoldenAxe"}
+BUTTON_COUNTS = {"ga2": 3, "jpark": 1, "alien3": 2, "spidman": 2,
+                 "orunners": 6}
+RBF_BY_PARENT = {"ga2": "s32GoldenAxe", "orunners": "s32OutRunners"}
 
 UNSUPPORTED = {"as1", "as1a", "as1b", "as1c"}
 
