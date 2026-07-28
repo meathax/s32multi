@@ -30,18 +30,33 @@ module s32_linebuf (
 
 // Each physical layer/bank is an independent one-write/one-read memory.
 // Quartus 17 infers twelve 512x14 dual-port altsyncrams from this shape.
-reg [13:0] lbuf_text_b0 [0:511];
-reg [13:0] lbuf_text_b1 [0:511];
-reg [13:0] lbuf_nbg0_b0 [0:511];
-reg [13:0] lbuf_nbg0_b1 [0:511];
-reg [13:0] lbuf_nbg1_b0 [0:511];
-reg [13:0] lbuf_nbg1_b1 [0:511];
-reg [13:0] lbuf_nbg2_b0 [0:511];
-reg [13:0] lbuf_nbg2_b1 [0:511];
-reg [13:0] lbuf_nbg3_b0 [0:511];
-reg [13:0] lbuf_nbg3_b1 [0:511];
-reg [13:0] lbuf_bmp_b0  [0:511];
-reg [13:0] lbuf_bmp_b1  [0:511];
+//
+// +define+S32_LINEBUF_MLAB moves them into Cyclone V MLABs instead.  Each holds
+// only 7,168 bits but still consumes a whole 10,240-bit M10K, so on a revision
+// that is M10K-bound and ALM-rich (Multi 32 keeps two palettes and 128 KiB of
+// work RAM) this trades ~192 LABs for twelve M10Ks in the exact clock domain
+// that is hardest to route.
+//
+// no_rw_check is legal here: the renderer writes the bank that the display is
+// NOT showing, and the rd_bank mux below discards that bank's registered pixel,
+// so a same-address collision can only corrupt a value that is thrown away.
+`ifdef S32_LINEBUF_MLAB
+ `define S32_LBUF_STYLE (* ramstyle = "MLAB, no_rw_check" *)
+`else
+ `define S32_LBUF_STYLE
+`endif
+`S32_LBUF_STYLE reg [13:0] lbuf_text_b0 [0:511];
+`S32_LBUF_STYLE reg [13:0] lbuf_text_b1 [0:511];
+`S32_LBUF_STYLE reg [13:0] lbuf_nbg0_b0 [0:511];
+`S32_LBUF_STYLE reg [13:0] lbuf_nbg0_b1 [0:511];
+`S32_LBUF_STYLE reg [13:0] lbuf_nbg1_b0 [0:511];
+`S32_LBUF_STYLE reg [13:0] lbuf_nbg1_b1 [0:511];
+`S32_LBUF_STYLE reg [13:0] lbuf_nbg2_b0 [0:511];
+`S32_LBUF_STYLE reg [13:0] lbuf_nbg2_b1 [0:511];
+`S32_LBUF_STYLE reg [13:0] lbuf_nbg3_b0 [0:511];
+`S32_LBUF_STYLE reg [13:0] lbuf_nbg3_b1 [0:511];
+`S32_LBUF_STYLE reg [13:0] lbuf_bmp_b0  [0:511];
+`S32_LBUF_STYLE reg [13:0] lbuf_bmp_b1  [0:511];
 
 integer __lbi;
 initial begin

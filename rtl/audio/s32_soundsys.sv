@@ -7,7 +7,13 @@
 import s32_pkg::*;
 
 module s32_soundsys #(
-    parameter SYSTEM32_ONLY = 1'b0
+    parameter SYSTEM32_ONLY = 1'b0,
+    // Dedicated Multi 32 revisions (OutRunners): the board has one YM3438 and a
+    // MultiPCM, so the System 32 RF5C68 and the second YM3438 are physically
+    // absent.  Both are otherwise instantiated unconditionally and only gated at
+    // runtime by is_multi32, which costs a whole FM core plus the RF5C68 wave
+    // RAM in a revision that can never reach them.
+    parameter MULTI32_ONLY = 1'b0
 ) (
     input             clk,          // clk_sys
     input             ce_z80,       // 8.054 / 8.0 MHz
@@ -183,13 +189,25 @@ wire        pcm_cs = (z_addr[15:13] == 3'b110);   // C000-DFFF
 wire [7:0]  rf_rdata;
 wire signed [15:0] rf_l, rf_r;
 
-s32_rf5c68 rf5c68 (
-    .clk(clk), .ce(ce_pcm & ~is_multi32), .rst(rst),
-    .cs(pcm_cs & ~is_multi32 & (z_mem_rd | z_mem_wr)),
-    .we(z_mem_wr),
-    .addr(z_addr[12:0]), .wdata(z_dout), .rdata(rf_rdata),
-    .out_l(rf_l), .out_r(rf_r)
-);
+generate
+    if (MULTI32_ONLY) begin : g_no_rf5c68
+        // Multi 32 replaces the RF5C68 with the MultiPCM at the same
+        // 0xC000-0xDFFF window; is_multi32 already forces this chip's CE and CS
+        // low and routes 0x00 back to the Z80, so nothing observable changes.
+        assign rf_rdata = 8'h00;
+        assign rf_l = 16'sd0;
+        assign rf_r = 16'sd0;
+    end
+    else begin : g_rf5c68
+        s32_rf5c68 rf5c68 (
+            .clk(clk), .ce(ce_pcm & ~is_multi32), .rst(rst),
+            .cs(pcm_cs & ~is_multi32 & (z_mem_rd | z_mem_wr)),
+            .we(z_mem_wr),
+            .addr(z_addr[12:0]), .wdata(z_dout), .rdata(rf_rdata),
+            .out_l(rf_l), .out_r(rf_r)
+        );
+    end
+endgenerate
 
 reg [2:0] mpcm_bank_lo, mpcm_bank_hi;
 wire signed [15:0] mp_l, mp_r;
@@ -240,14 +258,28 @@ jt12 fm1 (
     .snd_left(fm1_l), .snd_right(fm1_r), .snd_sample()
 );
 
-jt12 fm2 (
-    .rst(rst), .clk(clk), .cen(ce_fm),
-    .din(z_dout), .addr(z_addr[1:0]),
-    .cs_n(~fm2_cs), .wr_n(z_wr_n | z_iorq_n),
-    .dout(fm2_dout), .irq_n(fm2_irq_n),
-    .en_hifi_pcm(1'b1),
-    .snd_left(fm2_l), .snd_right(fm2_r), .snd_sample()
-);
+generate
+    if (MULTI32_ONLY) begin : g_no_fm2
+        // Multi 32 has a single YM3438.  fm2_cs is already forced low by
+        // is_multi32 and the Z80 read mux returns 0xff for port 0x90, so the
+        // second core can only ever contribute silence.  Its irq_n is not wired
+        // to the sound interrupt controller (only YM #1 is, matching MAME).
+        assign fm2_dout  = 8'hff;
+        assign fm2_irq_n = 1'b1;
+        assign fm2_l = 16'sd0;
+        assign fm2_r = 16'sd0;
+    end
+    else begin : g_fm2
+        jt12 fm2 (
+            .rst(rst), .clk(clk), .cen(ce_fm),
+            .din(z_dout), .addr(z_addr[1:0]),
+            .cs_n(~fm2_cs), .wr_n(z_wr_n | z_iorq_n),
+            .dout(fm2_dout), .irq_n(fm2_irq_n),
+            .en_hifi_pcm(1'b1),
+            .snd_left(fm2_l), .snd_right(fm2_r), .snd_sample()
+        );
+    end
+endgenerate
 
 // ---------------------------------------------------------------------------
 // sound interrupt controller (Appendix B.2): 3 vector slots

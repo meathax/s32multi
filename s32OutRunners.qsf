@@ -9,4 +9,19 @@ set_global_assignment -name VERILOG_MACRO "S32_RELEASE_MINIMAL=1"
 # headroom without changing the synthesised FM state machine.
 set_global_assignment -name VERILOG_MACRO "S32_JT12_MLAB_SHIFTS=1"
 
-set_global_assignment -name LAST_QUARTUS_VERSION "17.0.2 Standard Edition"
+# OutRunners never executes a V60/V70 floating-point opcode.  Verified over the
+# 420-frame real-ROM run (boot -> attract, plus coin and start): the FP-disabled
+# build is pixel-identical and takes no reserved-instruction exception.  This
+# removes the FP register file, accumulator and decode cone, as the Golden Axe
+# revision already does.
+set_global_assignment -name VERILOG_MACRO "S32_V60_NO_FP=1"
+
+# Multi 32 is M10K-bound, not ALM-bound: the first fit reported 32,449/41,910
+# ALMs (77%) but 531/553 RAM blocks (96%).  The twelve 512x14 tilemap line
+# buffers and the 2 KiB S32COMM share RAM each occupy whole 10,240-bit M10Ks
+# while storing 7,168 and 16,384 bits, so moving them into MLABs spends spare
+# ALMs to buy back scarce block RAM in the clk_ram domain that is hardest to
+# route.  Golden Axe and the universal profile keep the M10K form.
+set_global_assignment -name VERILOG_MACRO "S32_LINEBUF_MLAB=1"
+
+set_global_assignment -name LAST_QUARTUS_VERSION "17.0.2 Lite Edition"

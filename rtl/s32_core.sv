@@ -6,6 +6,25 @@
 
 import s32_pkg::*;
 
+// Dedicated single-game revisions share two area choices: the synchronous
+// MLAB-backed V60 ROM cache instead of the generic asynchronous register/mux
+// cache, and a hardwired "no protection ROM requester" on SDRAM p0.  Both are
+// only legal when nothing else can contend for that port, which is exactly the
+// case for the unprotected profiles.  Derive one macro so the guards below stay
+// readable (Verilog `ifdef has no ||).
+// +define+S32_NO_MLAB_ROM_CACHE forces the generic asynchronous cache back on
+// for A/B testing: the MLAB lookup costs one extra raw clk_sys, which is inside
+// one architectural interval for Golden Axe's 16.108 MHz V60 but can occasionally
+// straddle a ce edge on OutRunners' 20 MHz V70.
+`ifndef S32_NO_MLAB_ROM_CACHE
+`ifdef S32_GOLDENAXE_ONLY
+ `define S32_MLAB_ROM_CACHE 1
+`endif
+`ifdef S32_OUTRUNNERS_ONLY
+ `define S32_MLAB_ROM_CACHE 1
+`endif
+`endif
+
 module s32_core #(
 `ifdef S32_OUTRUNNERS_ONLY
     // Dedicated Multi 32 profile takes precedence over the shared QSF's
@@ -247,7 +266,7 @@ wire        v60_debug_halted;
 wire        if_req;
 wire [23:0] if_addr;                 // frontier byte address (low 3 bits = intra-line
                                     // offset used to pre-align the returned line)
-`ifdef S32_GOLDENAXE_ONLY
+`ifdef S32_MLAB_ROM_CACHE
 wire [63:0] if_data;
 wire        if_served;
 `else
@@ -836,7 +855,7 @@ wire [15:0] sh_rdata;
 wire [23:0] zrom_ba;
 wire [21:0] mpcm_ba;
 
-s32_soundsys #(.SYSTEM32_ONLY(SYSTEM32_ONLY)) sound (
+s32_soundsys #(.SYSTEM32_ONLY(SYSTEM32_ONLY), .MULTI32_ONLY(OUTRUNNERS_ONLY)) sound (
     .clk(clk_sys), .ce_z80(ce_z80), .ce_fm(ce_fm), .ce_pcm(ce_pcm),
     .rst(rst),
     .z80_reset(~io0_cnt2),
@@ -872,6 +891,12 @@ assign sdr_p4_addr = SDR_MULTIPCM_BASE[24:1] + {3'b000, mpcm_ba[21:1]};
 wire       sel_comm_ram = sel_comm && (A[15:12] == 4'h0);
 wire       sel_comm_cn  = sel_comm && (A[15:0] == 16'h1000);
 wire       sel_comm_fg  = sel_comm && (A[15:0] == 16'h1002);
+// 2 KiB of S32COMM link-board share RAM.  Only 16,384 bits, but it lands in two
+// whole M10Ks; on the M10K-bound Multi 32 revision the MLAB form is the better
+// trade.  Single read port, single write port, and the read is registered.
+`ifdef S32_LINEBUF_MLAB
+(* ramstyle = "MLAB, no_rw_check" *)
+`endif
 reg [7:0]  comm_ram [0:2047];
 reg [7:0]  comm_q;
 reg        comm_cn, comm_fg, comm_zfg;
@@ -930,9 +955,14 @@ s32_io5296 io0 (
     .in_pa(in_p1a), .in_pb(in_p2a),
     .in_pc(in_portc),                          // B2: portc no longer carries EEPROM
     .in_pe(in_svc12),
-    // System 32 EEPROM DO on SERVICE34_A bit 7; Multi 32 reads it on io1 instead
-    // (see io1 below), so don't force eep_do onto io0 bit 7 in Multi 32.
-    .in_pf(is_multi32 ? in_svc34 : {eep_do, in_svc34[6:0]}),
+    // EEPROM DO is on SERVICE34_A bit 7 for BOTH board families.  MAME's
+    // multi32_generic inherits system32_generic's SERVICE34_A unchanged
+    // (segas32.cpp:1354) and only ADDS the second copy on SERVICE34_B
+    // (segas32.cpp:1438) — the 93C46 DO pin is wired to both 315-5296s.  The
+    // earlier Multi 32 carve-out left io0 bit 7 stuck at 1, so any code path
+    // that clocked the EEPROM through chip 1 but sampled it on chip 0 read
+    // erased data forever.
+    .in_pf({eep_do, in_svc34[6:0]}),
     .out_pd(io0_pd), .out_pg(io0_pg), .out_ph(io0_ph),
     .cnt0(), .cnt1(io0_cnt1), .cnt2(io0_cnt2)
 );
@@ -1023,26 +1053,47 @@ generate
                 analog_bank <= m_wdata[0];   // 0xC00060 analog_bank_w
         end
 
-        for (t = 0; t < 3; t = t + 1) begin : tracks
-            s32_upd4701 upd (
-                .clk(clk_sys), .rst(rst),
-                .delta_valid(trk_dv[t]), .dx(trk_dx[t]), .dy(trk_dy[t]),
-                .cs(m_req && sel_ioex && m_be[0] &&
-                    cfg_has_track && A[5:3] == t[2:0]), // B4: 0x40/48/50
-                .we(m_we), .addr(A[2:1]),
-                .rdata(trk_q[t]), .buttons(trk_btn[t])
-            );
+        // The uPD4701 counters only exist on the SegaSonic trackball harness.
+        // OutRunners takes this banked-ADC branch because it is Multi 32, but
+        // its descriptor sets has_track=0, so the three counters are dead logic
+        // in that revision.
+        if (OUTRUNNERS_ONLY) begin : g_no_tracks
+            for (t = 0; t < 3; t = t + 1) begin : tracks
+                assign trk_q[t] = 8'hff;
+            end
+        end
+        else begin : g_tracks
+            for (t = 0; t < 3; t = t + 1) begin : tracks
+                s32_upd4701 upd (
+                    .clk(clk_sys), .rst(rst),
+                    .delta_valid(trk_dv[t]), .dx(trk_dx[t]), .dy(trk_dy[t]),
+                    .cs(m_req && sel_ioex && m_be[0] &&
+                        cfg_has_track && A[5:3] == t[2:0]), // B4: 0x40/48/50
+                    .we(m_we), .addr(A[2:1]),
+                    .rdata(trk_q[t]), .buttons(trk_btn[t])
+                );
+            end
         end
     end
 endgenerate
 
 wire [7:0] ppi_q;
-s32_i8255 ppi (
-    .clk(clk_sys),
-    .cs(m_req && sel_ppi && m_be[0]),
-    .we(m_we), .addr(A[2:1]), .wdata(m_wdata[7:0]), .rdata(ppi_q),
-    .pa(ppi_pa), .pb(ppi_pb), .pc_in(ppi_pc), .pc_out()
-);
+generate
+    // The 8255 is the 4/6-player expansion board (ga2, spidman, harddunk).
+    // OutRunners is a two-station driving cabinet with has_ppi=0, and sel_ppi
+    // is already gated by cfg_has_ppi, so the chip is unreachable there.
+    if (OUTRUNNERS_ONLY) begin : g_no_ppi
+        assign ppi_q = 8'hff;
+    end
+    else begin : g_ppi
+        s32_i8255 ppi (
+            .clk(clk_sys),
+            .cs(m_req && sel_ppi && m_be[0]),
+            .we(m_we), .addr(A[2:1]), .wdata(m_wdata[7:0]), .rdata(ppi_q),
+            .pa(ppi_pa), .pb(ppi_pb), .pc_in(ppi_pc), .pc_out()
+        );
+    end
+endgenerate
 
 // ---------------------------------------------------------------------------
 // interrupt controller
@@ -1147,6 +1198,16 @@ assign v25_dbg_io_raw  = 1'b0;
 assign v25_dbg_unm_raw = 1'b0;
 `endif
 
+// OutRunners is an unprotected Multi 32 board (MAME segas32.cpp marks the set
+// "not protected", and gen_mra.py gives it has_v25=0), so the 317-xxxx socket
+// and its 0xA00000 mailbox window are physically absent.  The HLE responder is
+// otherwise instantiated unconditionally and carries a 2 KiB dual-port store
+// plus its table ROM; with cfg_has_v25 tied low it can only ever return the
+// open-bus value the read mux already substitutes for sel_v25.
+`ifdef S32_OUTRUNNERS_ONLY
+assign v25_q = 8'hff;
+`else
+
 `ifdef S32_REAL_V25
 // V25 program-fetch address to SDRAM port 5 — declared before the instantiation
 // that drives .rom_addr so no wrong-width implicit net is inferred (this path was
@@ -1246,6 +1307,7 @@ s32_v25 v25 (
     .cs(m_req && sel_v25 && cfg_has_v25 && m_be[0]), .we(m_we),
     .addr(A[11:1]), .wdata(m_wdata[7:0]), .rdata(v25_q)
 );
+`endif
 
 // ---------------------------------------------------------------------------
 
@@ -1272,7 +1334,7 @@ assign sdr_p5_addr = '0;
 //   32 lines x 8 bytes direct-mapped. Hit = 1 clk_sys; miss = 4 sequential
 //   p0 word reads to fill the line. Reset (incl. ROM download) invalidates.
 // ---------------------------------------------------------------------------
-`ifdef S32_GOLDENAXE_ONLY
+`ifdef S32_MLAB_ROM_CACHE
 wire        rom_req_r;
 wire [23:1] rom_addr_r;
 `else
@@ -1283,7 +1345,9 @@ reg [23:1] rom_addr_r;
 // here so the icache lookup can suppress re-arming a completed ROM read while
 // the V60 bus still holds m_req; the driving logic lives in the read-mux block.
 reg        ack_r;
-`ifdef S32_GOLDENAXE_ONLY
+`ifdef S32_MLAB_ROM_CACHE
+// Both profiles that select this cache are unprotected builds: GAME_ONLY has
+// already tied prot_rom_req low, so p0 has a single requester.
 wire       prot_rom_grant = 1'b0;
 `else
 reg        prot_rom_grant;
@@ -1294,13 +1358,14 @@ assign sdr_p0_req  = prot_rom_grant ? prot_rom_req : rom_req_r;
 assign sdr_p0_addr = prot_rom_grant ? {2'b00, prot_p0_addr[21:1]} :
                                        {2'b00, rom_addr_r[21:1]};
 
-`ifdef S32_GOLDENAXE_ONLY
-// Golden Axe-only area cache. The generic asynchronous cache below provides a
+`ifdef S32_MLAB_ROM_CACHE
+// Dedicated-profile area cache. The generic asynchronous cache below provides a
 // one-clk_sys hit, but its two variable-index read paths flatten 2,464 cache
 // bits into registers and very wide muxes in Quartus 17. This implementation
 // gives the dedicated profile one arbitrated synchronous lookup port. Because
-// the V60 advances only on ce_cpu (one clk_sys in three), the extra raw clock
-// of lookup latency remains inside one architectural CPU interval.
+// the V60/V70 advances only on ce_cpu (one clk_sys in three for Golden Axe, one
+// in two-plus for OutRunners' 20 MHz V70), the extra raw clock of lookup
+// latency remains inside one architectural CPU interval.
 wire        rom_ready;
 wire [15:0] rom_word_r;
 s32_ga_rom_cache ga_rom_cache (
