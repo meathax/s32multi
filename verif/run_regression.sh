@@ -233,6 +233,14 @@ iverilog -g2012 -DSIMULATION -s tb_core_map_decode -o /tmp/s32_core_map \
   rtl/audio/s32_audio_mix.sv rtl/audio/s32_soundsys.sv rtl/io/s32_io.sv rtl/prot/s32_prot.sv \
   verif/common/jt12_stub.v rtl/s32_core.sv verif/common/tb_core_map_decode.sv
 vvp /tmp/s32_core_map | grep -q "CORE MAP DECODE PASS" && echo "CORE MAP DECODE: PASS" || { echo "CORE MAP DECODE: FAIL"; exit 1; }
+iverilog -g2012 -DSIMULATION -DS32_SYSTEM32_ONLY -DS32_OUTRUNNERS_ONLY -DS32_RELEASE_MINIMAL \
+  -s tb_core_orunners_analog -o /tmp/s32_core_orunners_analog \
+  rtl/s32_pkg.sv rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv \
+  rtl/video/*.sv rtl/audio/s32_rf5c68.sv rtl/audio/s32_multipcm.sv \
+  rtl/audio/s32_audio_mix.sv rtl/audio/s32_soundsys.sv rtl/io/s32_io.sv rtl/prot/s32_prot.sv \
+  verif/common/jt12_stub.v rtl/s32_core.sv verif/common/tb_core_orunners_analog.sv
+vvp /tmp/s32_core_orunners_analog | grep -q "CORE OUTRUNNERS ANALOG BANK PASS" && \
+  echo "CORE OUTRUNNERS ANALOG BANK: PASS" || { echo "CORE OUTRUNNERS ANALOG BANK: FAIL"; exit 1; }
 echo "[35/35] real encrypted GA2 V25 firmware and exact 10 MHz CE cadence"
 bash verif/v25/run_v25_firmware.sh
 echo "SYSTEM 32 REGRESSION: PASS (35/35 tiers)"

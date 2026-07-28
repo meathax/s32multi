@@ -1,8 +1,9 @@
 //============================================================================
 //  V60 MOVD (64-bit move) directed test (audit R20 V60-10).  The old exec
 //  moved only 32 bits; MOVD transfers a register pair or a memory qword.
-//  Covers register-pair -> register-pair, register-pair -> memory qword, and
-//  memory qword -> register-pair.
+//  Covers register-pair -> register-pair, register-pair -> memory qword,
+//  memory qword -> register-pair, and the compact F2-D=0 autoincrement form
+//  used by OutRunners' work-RAM clear.
 //============================================================================
 `timescale 1ns/1ps
 
@@ -59,7 +60,7 @@ task movw_imm(input [4:0] rn, input [31:0] imm);
 endtask
 
 integer pass = 0, fail = 0;
-task chk(input cond, input [255:0] name);
+task chk(input cond, input [8*64-1:0] name);
     if (cond) begin pass = pass + 1; $display("  ok   %0s", name); end
     else      begin fail = fail + 1; $display("  FAIL %0s", name); end
 endtask
@@ -83,7 +84,22 @@ initial begin
     // MOVD [0x9000] -> R8(:R9): F2 D=1 (op2=R8), op1=direct addr (modm=0)
     ab(8'h3F); ab(8'h20 | 5'd8); ab(8'hF3); aw32(32'h0000_9000);
 
+    // OutRunners uses exactly `3F 40 8A`: MOVD R0:R1,[R10+].  F2-D=0's
+    // implicit first register must remain an lvalue, and qword autoincrement
+    // must advance by eight (MAME ReadAMAddress dimension 3).
+    movw_imm(5'd0, 32'h0000_0000);
+    movw_imm(5'd1, 32'h0000_0000);
+    movw_imm(5'd10, 32'h0000_9100);
+    ab(8'h3F); ab(8'h40); ab(8'h8A);
+
     ab(8'h00);                                   // HALT
+
+    // Prove the compact MOVD really overwrites memory rather than merely
+    // observing the RAM model's initial zero fill.
+    ram[32'h9100>>1] = 16'hffff;
+    ram[(32'h9100>>1)+1] = 16'hffff;
+    ram[(32'h9100>>1)+2] = 16'hffff;
+    ram[(32'h9100>>1)+3] = 16'hffff;
 
     repeat (8) @(posedge clk);
     rst = 0;
@@ -99,6 +115,10 @@ initial begin
     chk(ram[32'h9004>>1] == 16'h2222 && ram[(32'h9004>>1)+1] == 16'hBBBB, "MOVD -> mem high word");
     chk(cpu.r[8] == 32'hAAAA_1111, "MOVD mem -> R8 low word");
     chk(cpu.r[9] == 32'hBBBB_2222, "MOVD mem -> R9 high word");
+    chk(ram[32'h9100>>1] == 16'h0000 && ram[(32'h9100>>1)+1] == 16'h0000 &&
+        ram[(32'h9100>>1)+2] == 16'h0000 && ram[(32'h9100>>1)+3] == 16'h0000,
+        "MOVD F2-D=0 register pair -> memory");
+    chk(cpu.r[10] == 32'h0000_9108, "MOVD qword autoincrement advances by eight");
 
     if (fail == 0) $display("V60 MOVD PASS (%0d checks)", pass);
     else           $display("V60 MOVD FAIL (%0d/%0d failed)", fail, pass+fail);

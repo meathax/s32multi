@@ -578,6 +578,7 @@ try {
 
     Write-Tier 34 "System32 palette/mixer/I-O/V25 mirrored address decode"
     Run-HdlTest "t34_core_map" "tb_core_map_decode" ($FullCoreSources + "verif/common/tb_core_map_decode.sv") "CORE MAP DECODE PASS" @("SIMULATION")
+    Run-HdlTest "t34_core_orunners_analog" "tb_core_orunners_analog" ($FullCoreSources + "verif/common/tb_core_orunners_analog.sv") "CORE OUTRUNNERS ANALOG BANK PASS" @("SIMULATION", "S32_SYSTEM32_ONLY", "S32_OUTRUNNERS_ONLY", "S32_RELEASE_MINIMAL")
 
     Write-Tier 35 "real encrypted GA2 V25 firmware and exact 10 MHz CE cadence"
     $v25Output = @(& (Join-Path $Root "verif/v25/run_v25_firmware.ps1") 2>&1)

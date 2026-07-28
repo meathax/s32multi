@@ -392,7 +392,15 @@ wire       tdv_a [0:2];
 wire signed [8:0] tdx_a [0:2], tdy_a [0:2];
 wire [7:0] tbt_a [0:2];
 generate
-    for (genvar gi = 0; gi < 8; gi = gi + 1) assign adc_a[gi] = 8'h80;
+    for (genvar gi = 0; gi < 8; gi = gi + 1) begin : adc_defaults
+        // MAME's OutRunners cabinet rests with both steering wheels centred
+        // (ANALOG1/4 = 0x80) and all four pedals released (ANALOG2/3/7/8 =
+        // 0x00).  Feeding 0x80 to every channel makes gas and brake appear
+        // half pressed and does not represent either MAME or the MiSTer top.
+        assign adc_a[gi] = board.orunners
+                         ? ((gi == 0 || gi == 3) ? 8'h80 : 8'h00)
+                         : 8'h80;
+    end
     for (genvar gj = 0; gj < 3; gj = gj + 1) begin
         assign tdv_a[gj] = 1'b0;
         assign tdx_a[gj] = 9'sd0;

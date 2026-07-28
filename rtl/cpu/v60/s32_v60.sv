@@ -543,6 +543,11 @@ wire [7:0] modval  = fb[ea_ofs];
 wire [4:0] modreg  = modval[4:0];
 wire [2:0] modtop  = modval[7:5];
 wire [7:0] modval2 = fb[ea_ofs+1];
+// MOVD asks the V60 address-mode decoder for dimension 3: qword operands
+// autoincrement/decrement by eight bytes and indexed operands scale by eight.
+// The data bus still transfers each qword as two 32-bit cycles, so keep the
+// existing two-bit ea_dim for bus widths and carry the address scaling here.
+wire [2:0] ea_scale_dim = (cur_op == 8'h3f) ? 3'd3 : {1'b0, ea_dim};
 
 reg  [4:0] rf_raddr_a, rf_raddr_b;
 // Keep the architectural register file in flops, but expose exactly two
@@ -1279,17 +1284,13 @@ else if (ce) begin
             end
             else begin
                 // F2 D=0: op1 = reg value, op2 = AM(write)
-                // XCH.B/H/W exception: op1 is an LVALUE (the swap needs the
-                // register NUMBER, not its value). The generic value path left
-                // flag1=0, so XCH's exec (flag1&&flag2 fails) took the
-                // register<->memory branch and wrote R[op1] to a bogus address
-                // instead of swapping the two registers. This corrupted ga2's
-                // char-select object spawn (xch.w R19,R20 at 0x063BEB/0x063BF1),
-                // so the character objects never got their active flag/handler
-                // and the on-scale character never rendered. f12_op1_is_addr
-                // already classifies XCH op1 as an address for the F1/F2-D=1
-                // paths; this closes the F2-D=0 gap. (encoding 45 53 74)
-                if (cur_op == 8'h41 || cur_op == 8'h43 || cur_op == 8'h45) begin
+                // XCH.B/H/W and MOVD exceptions: op1 is an LVALUE (the register
+                // NUMBER), not the register's current value.  MOVD's F2-D=0
+                // form is used by OutRunners' work-RAM clear (3F 40 8A).  Treating
+                // R0 as a value made that instruction read a qword from address
+                // zero and copy ROM poison into RAM instead of storing R0:R1.
+                if (cur_op == 8'h41 || cur_op == 8'h43 || cur_op == 8'h45 ||
+                    cur_op == 8'h3f) begin
                     op1   <= {27'b0, instflags[4:0]};
                     flag1 <= 1'b1;
                 end
@@ -1426,13 +1427,13 @@ else if (ce) begin
             end
             3'd4: begin             // Autoincrement
                 ea_addr <= rf_rdata_a;
-                queue_reg_write(modreg, rf_rdata_a + dim_step(ea_dim), 32'hffff_ffff);
+                queue_reg_write(modreg, rf_rdata_a + (32'd1 << ea_scale_dim), 32'hffff_ffff);
                 ea_len <= 5'd1;
                 st <= ea_want_addr ? S_EA_DONE : S_EA_VAL;
             end
             3'd5: begin             // Autodecrement
-                ea_addr <= rf_rdata_a - dim_step(ea_dim);
-                queue_reg_write(modreg, rf_rdata_a - dim_step(ea_dim), 32'hffff_ffff);
+                ea_addr <= rf_rdata_a - (32'd1 << ea_scale_dim);
+                queue_reg_write(modreg, rf_rdata_a - (32'd1 << ea_scale_dim), 32'hffff_ffff);
                 ea_len <= 5'd1;
                 st <= ea_want_addr ? S_EA_DONE : S_EA_VAL;
             end
@@ -1440,12 +1441,12 @@ else if (ce) begin
                 case (modval2[7:5])
                 3'd0, 3'd1, 3'd2: begin // Displacement indexed: [reg2+disp] + reg1*size
                     d1t = disp_of(ea_ofs+2, modval2[6:5]);
-                    ea_addr <= rf_rdata_b + d1t + (rf_rdata_a << ea_dim);
+                    ea_addr <= rf_rdata_b + d1t + (rf_rdata_a << ea_scale_dim);
                     ea_len  <= 5'd2 + disp_len(modval2[6:5]);
                     st <= ea_want_addr ? S_EA_DONE : S_EA_VAL;
                 end
                 3'd3: begin            // Register indirect indexed
-                    ea_addr <= rf_rdata_b + (rf_rdata_a << ea_dim);
+                    ea_addr <= rf_rdata_b + (rf_rdata_a << ea_scale_dim);
                     ea_len  <= 5'd2;
                     st <= ea_want_addr ? S_EA_DONE : S_EA_VAL;
                 end
@@ -1453,7 +1454,7 @@ else if (ce) begin
                     d1t = disp_of(ea_ofs+2, modval2[6:5]);
                     dbus_req <= 1; dbus_we <= 0; dbus_size <= 2'd2;
                     dbus_addr <= rf_rdata_b + d1t;
-                    ea_addr <= (rf_rdata_a << ea_dim);  // index added after deref
+                    ea_addr <= (rf_rdata_a << ea_scale_dim);  // index added after deref
                     ea_len  <= 5'd2 + disp_len(modval2[6:5]);
                     st <= S_EA_IND2;
                 end
@@ -1464,13 +1465,13 @@ else if (ce) begin
                     else case (modval2[3:0])
                     4'h0, 4'h1, 4'h2: begin
                         d1t = disp_of(ea_ofs+2, modval2[1:0]);
-                        ea_addr <= pc + d1t + (rf_rdata_a << ea_dim);
+                        ea_addr <= pc + d1t + (rf_rdata_a << ea_scale_dim);
                         ea_len  <= 5'd2 + disp_len(modval2[1:0]);
                         st <= ea_want_addr ? S_EA_DONE : S_EA_VAL;
                     end
                     4'h3: begin
                         d1t = fb32(ea_ofs+2);
-                        ea_addr <= d1t + (rf_rdata_a << ea_dim);
+                        ea_addr <= d1t + (rf_rdata_a << ea_scale_dim);
                         ea_len  <= 5'd6;
                         st <= ea_want_addr ? S_EA_DONE : S_EA_VAL;
                     end
@@ -1478,7 +1479,7 @@ else if (ce) begin
                         d1t = disp_of(ea_ofs+2, modval2[1:0]);
                         dbus_req <= 1; dbus_we <= 0; dbus_size <= 2'd2;
                         dbus_addr <= pc + d1t;
-                        ea_addr <= (rf_rdata_a << ea_dim);
+                        ea_addr <= (rf_rdata_a << ea_scale_dim);
                         ea_len  <= 5'd2 + disp_len(modval2[1:0]);
                         st <= S_EA_IND2;
                     end
@@ -1486,7 +1487,7 @@ else if (ce) begin
                         d1t = fb32(ea_ofs+2);
                         dbus_req <= 1; dbus_we <= 0; dbus_size <= 2'd2;
                         dbus_addr <= d1t;
-                        ea_addr <= (rf_rdata_a << ea_dim);
+                        ea_addr <= (rf_rdata_a << ea_scale_dim);
                         ea_len  <= 5'd6;
                         st <= S_EA_IND2;
                     end

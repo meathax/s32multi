@@ -977,14 +977,16 @@ generate
             assign trk_q[t] = 8'hff;
         end
     end
-    else if (GAME_ONLY) begin : g_game_no_analog
+    else if (GAME_ONLY && !OUTRUNNERS_ONLY) begin : g_game_no_analog
         // The trackball counters (sonic) stay compiled out of the dedicated
         // release, but the MSM6253 ADC is tiny and the gun/positional games on
         // this profile (alien3, jpark: descriptor has_adc=1) read their aim
         // through it at 0xC00050-57, so it is retained.  Non-ADC descriptors
         // gate sel_adc off and Quartus sweeps it as before.  System 32 games
         // never bank the analog mux (0xC00060 is Multi 32-only), so the four
-        // fixed channels P1X/P1Y/P2X/P2Y match MAME's ANALOG1-4.
+        // fixed channels P1X/P1Y/P2X/P2Y match MAME's ANALOG1-4.  The dedicated
+        // OutRunners profile is Multi 32 and therefore takes the banked path
+        // below even though it is also a GAME_ONLY build.
         s32_msm6253 adc (
             .clk(clk_sys),
             .cs(m_req && sel_adc && m_be[0]), // 0xC00050-57
