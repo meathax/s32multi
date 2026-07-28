@@ -116,6 +116,13 @@ initial begin
     board.sprite_bank_mask  = sbm[1:0];
 end
 
+// +SCREENB selects the Multi 32 second monitor, exactly as the MiSTer top does
+// with the OSD "Screen (Multi32)" option: the RGB source AND the single DDR
+// line-fetch port move together.  Defaults to 0, so every existing
+// single-screen run stays bit-identical.
+reg screen_b = 1'b0;
+initial screen_b = $test$plusargs("SCREENB");
+
 // ---------------------------------------------------------------------------
 // memory models (SDRAM layout per s32_pkg bases)
 // ---------------------------------------------------------------------------
@@ -231,7 +238,11 @@ end
 // memory; +define+S32_REAL_FB_SIM selects the production s32_fb_if plus a
 // deterministic MiSTer-style DDR model for Golden Axe qualification.
 wire        fbw_start, fbw_valid, fbw_end, fbe_req, fbr_req;
-wire  [1:0] fbw_buf, fbe_buf, fbr_buf;
+wire  [1:0] fbw_buf, fbe_buf, fbr_buf_core;
+// Mirror the MiSTer top: Multi 32 keeps {monitor, front/back} in the four
+// physical sprite buffers, and the single line-fetch port is steered at the
+// board level to whichever monitor is being presented.
+wire  [1:0] fbr_buf = (b0[0] && screen_b) ? {1'b1, fbr_buf_core[0]} : fbr_buf_core;
 wire  [8:0] fbw_x, fbr_x;
 wire  [7:0] fbw_y, fbe_y, fbr_y;
 wire [15:0] fbw_pix;
@@ -410,7 +421,8 @@ generate
 endgenerate
 
 wire hs, vs, hb, vb;
-wire [23:0] rgb_a;
+wire [23:0] rgb_a, rgb_b;
+wire [23:0] rgb_out = screen_b ? rgb_b : rgb_a;
 wire        ce_pix;
 wire signed [15:0] audio_l, audio_r;
 
@@ -431,7 +443,7 @@ s32_core core (
     .fb_wr_valid(fbw_valid), .fb_wr_pix(fbw_pix), .fb_wr_end(fbw_end),
     .fb_wr_shadow(fbw_shadow), .fb_wr_busy(fbw_busy),
     .fb_er_req(fbe_req), .fb_er_buf(fbe_buf), .fb_er_y(fbe_y), .fb_er_ack(fbe_ack),
-    .fb_rd_req(fbr_req), .fb_rd_buf(fbr_buf), .fb_rd_y(fbr_y), .fb_rd_ack(fbr_ack),
+    .fb_rd_req(fbr_req), .fb_rd_buf(fbr_buf_core), .fb_rd_y(fbr_y), .fb_rd_ack(fbr_ack),
     .fb_rd_x(fbr_x), .fb_rd_pix(fbr_pix),
     .v25_prg_wr(1'b0), .v25_prg_waddr(16'h0), .v25_prg_wdata(8'h0),
     .eep_ld_wr(1'b0), .eep_ld_addr(6'h0), .eep_ld_data(16'h0), .eep_rd_addr(6'h0),
@@ -444,7 +456,7 @@ s32_core core (
     .trk_dv(tdv_a), .trk_dx(tdx_a), .trk_dy(tdy_a),
     .trk_btn(tbt_a),
     .ppi_pa(8'hff), .ppi_pb(8'hff), .ppi_pc(8'hff),
-    .rgb_a(rgb_a), .rgb_b(), .ce_pix(ce_pix), .hs(hs), .vs(vs), .hb(hb), .vb(vb),
+    .rgb_a(rgb_a), .rgb_b(rgb_b), .ce_pix(ce_pix), .hs(hs), .vs(vs), .hb(hb), .vb(vb),
     .audio_l(audio_l), .audio_r(audio_r), .out_lamps(),
     .debug_pc(), .debug_halted(), .debug_status(), .debug_first_rom(), .debug_hcnt()
 );
@@ -733,7 +745,7 @@ always @(posedge clk_sys) begin
     end
     if (dumping && ce_pix && !hb && !vb && dump_y < 224) begin
         if (dump_x < 416) begin
-            $fwrite(dump_fd, "%0d %0d %0d\n", rgb_a[23:16], rgb_a[15:8], rgb_a[7:0]);
+            $fwrite(dump_fd, "%0d %0d %0d\n", rgb_out[23:16], rgb_out[15:8], rgb_out[7:0]);
             dump_x = dump_x + 1;
         end
     end
@@ -949,7 +961,15 @@ always @(posedge clk_sys) begin
     if (core.m_req && !core.m_ack) begin
         hang_cnt = hang_cnt + 1;
         if (hang_cnt == 20000)
+// Profiles that select the MLAB ROM cache have no rom_filling / ic_hit nets:
+// the cache keeps that state inside s32_ga_rom_cache.
 `ifdef S32_GOLDENAXE_ONLY
+ `define S32_TB_MLAB_ROM_CACHE 1
+`endif
+`ifdef S32_OUTRUNNERS_ONLY
+ `define S32_TB_MLAB_ROM_CACHE 1
+`endif
+`ifdef S32_TB_MLAB_ROM_CACHE
             $display("[HANG] pc=%08x A=%06x we=%b be=%b st=%0d p0req=%b",
                 core.v60.dbg_pc, {core.A[23:1],1'b0}, core.m_we, core.m_be,
                 core.v60.st, p0_req);
@@ -1086,7 +1106,7 @@ endtask
 // per-frame video liveness: nonblack pixels in the active window
 integer nb_pix = 0;
 always @(posedge clk_sys)
-    if (ce_pix && !hb && !vb && rgb_a != 24'h0) nb_pix = nb_pix + 1;
+    if (ce_pix && !hb && !vb && rgb_out != 24'h0) nb_pix = nb_pix + 1;
 
 // A compact whole-frame signature proves that active video remains known and
 // continues changing after the game has accepted coin/start/player input.
