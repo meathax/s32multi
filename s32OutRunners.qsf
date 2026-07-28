@@ -24,4 +24,17 @@ set_global_assignment -name VERILOG_MACRO "S32_V60_NO_FP=1"
 # route.  Golden Axe and the universal profile keep the M10K form.
 set_global_assignment -name VERILOG_MACRO "S32_LINEBUF_MLAB=1"
 
+# JT12's two 256-entry lookup tables (exprom 256x10, logsin 256x12) are constant
+# ROMs that each occupy a whole M10K for under 3 Kbit.  As pure combinational
+# functions of eight address bits they belong in LUTs on this revision.
+set_global_assignment -name VERILOG_MACRO "S32_JT12_LOGIC_ROMS=1"
+
+# The shared QSF selects AGGRESSIVE AREA, tuned for the dense Golden Axe / V25
+# revision.  OutRunners is the opposite shape: the first fit left 23% of the
+# ALMs free but missed setup by 0.197 ns on clk_ram (3 of 100 paths).  Trading
+# the area we have for the timing we need costs no block RAM at all.
+set_global_assignment -name OPTIMIZATION_MODE "BALANCED"
+set_global_assignment -name OPTIMIZATION_TECHNIQUE BALANCED
+set_global_assignment -name PHYSICAL_SYNTHESIS_COMBO_LOGIC_FOR_AREA OFF
+
 set_global_assignment -name LAST_QUARTUS_VERSION "17.0.2 Lite Edition"

@@ -34,6 +34,12 @@ module jt12_exprom
     output reg [9:0] exp
 );
 
+`ifdef S32_JT12_LOGIC_ROMS
+// 256-entry constant table.  It is a whole M10K for 2,560 bits; on an M10K-bound
+// revision a LUT-based ROM is the better trade (it is a pure combinational
+// function of eight address bits).
+(* romstyle = "logic" *)
+`endif
     reg [9:0] explut_jt51[255:0];
     initial
     begin

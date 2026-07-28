@@ -32,6 +32,12 @@ module jt12_logsin
     output reg [11:0] logsin
 );  
 
+`ifdef S32_JT12_LOGIC_ROMS
+// 256-entry constant table.  It is a whole M10K for 3,072 bits; on an M10K-bound
+// revision a LUT-based ROM is the better trade (it is a pure combinational
+// function of eight address bits).
+(* romstyle = "logic" *)
+`endif
 reg [11:0] sinelut[255:0];
 initial begin
 	sinelut[8'd000] = 12'h000;
