@@ -955,6 +955,36 @@ always @(posedge clk_sys) begin
     end
 end
 
+// +PALCMP: Multi 32 keeps a whole second 0x4000-entry palette RAM for screen B,
+// which costs 32 M10Ks.  Sega gave each monitor its own so they *can* differ;
+// whether a given twin-cabinet title ever makes them differ is an empirical
+// question.  Sample both shadows every 10th frame and report the worst
+// divergence seen, so a single-palette Multi 32 build can be justified or
+// rejected on evidence rather than assumption.
+`ifdef S32_TB_HAS_PAL1
+integer palcmp_i, palcmp_diff, palcmp_worst = 0, palcmp_frames = 0;
+reg palcmp_en = 1'b0, palcmp_vb_d = 1'b0;
+integer palcmp_frame = 0;
+initial palcmp_en = $test$plusargs("PALCMP");
+always @(posedge clk_sys) begin
+    palcmp_vb_d <= vb;
+    if (palcmp_en && vb && !palcmp_vb_d) begin
+        palcmp_frame = palcmp_frame + 1;
+        if (palcmp_frame % 10 == 0) begin
+            palcmp_diff = 0;
+            for (palcmp_i = 0; palcmp_i < 16384; palcmp_i = palcmp_i + 1)
+                if (core.pal0.sim_shadow[palcmp_i] !==
+                    core.g_multi32_video.pal1.sim_shadow[palcmp_i])
+                    palcmp_diff = palcmp_diff + 1;
+            palcmp_frames = palcmp_frames + 1;
+            if (palcmp_diff > palcmp_worst) palcmp_worst = palcmp_diff;
+            $display("[palcmp] frame %0d: %0d/16384 entries differ (worst so far %0d)",
+                palcmp_frame, palcmp_diff, palcmp_worst);
+        end
+    end
+end
+`endif
+
 // bus-hang detector: a request that never acks is a core deadlock
 integer hang_cnt = 0;
 always @(posedge clk_sys) begin
