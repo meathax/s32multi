@@ -90,6 +90,16 @@ reg [7:0] ctl_latched [0:7];
 reg       render_count;             // MAME m_sprite_render_count (0/1)
 reg       render_after_erase;       // combined command: render after hidden erase
 reg       render_mon;               // monitor being presented, latched per pass
+// Multi 32 scan-buffer publish.  R_SWAP fires POST_VBLANK_CYCLES (~50 us) after
+// vblank ENDS, i.e. partway through line 0, but the display prefetches line 0
+// early during vblank at vcnt 261 (s32_core fb_rd_kick).  Flipping scan_buf at
+// R_SWAP therefore left line 0 fetched from the previous frame's buffer while
+// lines 1..223 came from the new one -- a corrupt top scanline, visible only
+// when consecutive frames differ there.  System 32 never had this because it
+// publishes at present_rise, before the prefetch.  Latch the swap here and
+// publish it at vblank start so Multi 32 follows the same discipline.
+reg [1:0] pending_scan_buf;
+reg       pending_scan_valid;
 reg       erase_after_swap;         // combined command: swap before destructive clear
 reg [1:0] erase_buf_sel;            // physical buffer selected for erase
 reg       erase_mon;                // Multi32 erase visits both monitors
@@ -317,6 +327,8 @@ always @(posedge clk) begin
         rs <= R_IDLE; rendering <= 0;
         disp_buf <= 2'b00;
         scan_buf <= 2'b00;
+        pending_scan_buf <= 2'b00;
+        pending_scan_valid <= 1'b0;
         debug_first_rom_desc <= 128'd0;
         debug_first_rom_valid <= 1'b0;
         debug_last_desc <= 128'd0;
@@ -372,10 +384,19 @@ always @(posedge clk) begin
         // vblank ends, matching MAME and preserving CPU-visible status timing.
         // Publish a completed physical buffer at vblank start, before the
         // line-0 DDR prefetch on raster line 261. Every visible scanline then
-        // comes from one stable buffer. Multi 32 retains its two-buffer map.
-        if (present_rise && !is_multi32 && ready_valid) begin
-            scan_buf <= ready_buf;
-            ready_valid <= 1'b0;
+        // comes from one stable buffer. Multi 32 retains its two-buffer map,
+        // but publishes at the same point for the same reason: its R_SWAP lands
+        // ~50 us after vblank ENDS, which is already inside line 0 and therefore
+        // after that line has been fetched.
+        if (present_rise) begin
+            if (!is_multi32 && ready_valid) begin
+                scan_buf <= ready_buf;
+                ready_valid <= 1'b0;
+            end
+            else if (is_multi32 && pending_scan_valid) begin
+                scan_buf <= pending_scan_buf;
+                pending_scan_valid <= 1'b0;
+            end
         end
 
         // audit R20 SP-3: a vblank pulse arriving while the FSM is still
@@ -465,8 +486,14 @@ always @(posedge clk) begin
             debug_swap_count <= debug_sat_inc(debug_swap_count);
             disp_buf <= {1'b0, ~disp_buf[0]}; // bit0 is the sole A/B selector
             publish_on_done <= 1'b1;
-            if (is_multi32)
-                scan_buf <= {1'b0, ~disp_buf[0]};
+            if (is_multi32) begin
+                // Latch, do not publish.  disp_buf keeps flipping here so the
+                // CPU-visible controller status timing is untouched; only the
+                // buffer the mixer scans is deferred to the next vblank start,
+                // where it lands before the line-0 prefetch instead of after it.
+                pending_scan_buf   <= {1'b0, ~disp_buf[0]};
+                pending_scan_valid <= 1'b1;
+            end
             else begin
                 work_buf <= next_work;
                 erase_buf_sel <= next_work;
