@@ -61,7 +61,14 @@ if {[llength [info commands get_current_revision]] > 0} {
     set s32_revision [get_current_revision]
 }
 set s32_ga_fixed_ce  [string equal $s32_revision "s32GoldenAxe"]
-set s32_out_fixed_ce [string equal $s32_revision "s32OutRunners"]
+# Match every OutRunners-profile revision, not just the release one.  The
+# diagnostic revision s32OutRunnersDbg has the identical fixed 20 MHz V70 NCO,
+# so it has the same real two-cycle requirement.  An exact-match test silently
+# dropped the exception for it and timed the build with stricter constraints
+# than the core it is meant to measure -- which both wastes a fit (the release
+# build closes at only +0.210 ns WITH the exception) and would make the
+# diagnostic a different machine than the one being diagnosed.
+set s32_out_fixed_ce [string match "s32OutRunners*" $s32_revision]
 set s32_cpu_fixed_ce [expr {$s32_ga_fixed_ce || $s32_out_fixed_ce}]
 
 if {$s32_cpu_fixed_ce} {

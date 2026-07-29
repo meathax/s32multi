@@ -616,8 +616,18 @@ always @(posedge clk) begin
                 // its list entry and any inline indirect table, it simply draws
                 // no pixels.  This is the only place the two differ from a
                 // drawn sprite, so the walk stays bit-identical.
-                if (d_srcw == 0 || d_srch == 0 || d_dstw == 0 || d_dsth == 0 ||
-                    (is_multi32 && (d_mon != render_mon))) begin
+                //
+                // KNOWN GAP: with the opposite selection the presented screen
+                // differs from its control in 59 pixels at x=313..319 (a run/
+                // line boundary, not a sprite) on alternating frames, with the
+                // swap cadence and overrun counts identical.  Unexplained, so
+                // +define+S32_NO_SPRITE_MON_SKIP disables the whole optimisation
+                // for an A/B without touching RTL.
+                if (d_srcw == 0 || d_srch == 0 || d_dstw == 0 || d_dsth == 0
+`ifndef S32_NO_SPRITE_MON_SKIP
+                    || (is_multi32 && (d_mon != render_mon))
+`endif
+                    ) begin
                     debug_activity[9] <= 1'b1;
                     debug_zero_count <= debug_sat_inc(debug_zero_count);
                     // Inline indirect tables occupy the following two list

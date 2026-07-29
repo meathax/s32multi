@@ -658,6 +658,20 @@ always @(posedge clk_sys) begin
     end
 end
 
+// Analog-source selectors.  Declared BEFORE first use: Quartus 17 does not
+// reliably accept a net referenced above its declaration in this file (the same
+// hazard the board_desc declaration above is hoisted for), even though iverilog
+// and Verilator both tolerate it.
+// O[18:17]: 0 = triggers on the right stick (LT/RT normally land on stick 2),
+//           1 = paddle, 2 = left-stick Y, 3 = digital only.
+`ifdef S32_OUTRUNNERS_ONLY
+wire [1:0] pedal_src = status[18:17];
+wire       steer_pad = status[19];
+`else
+wire [1:0] pedal_src = 2'd1;      // other profiles keep the historical paddle path
+wire       steer_pad = 1'b0;
+`endif
+
 // Steering rests at 0x80 (MAME orunners ANALOG1/4 are IPT_PADDLE with a 0x80
 // default), so the signed stick axis converts through the offset-binary path.
 // D-pad left/right stay as digital full-lock.  O[19] offers the paddle/spinner
@@ -682,16 +696,6 @@ function automatic [7:0] pedal_axis(input [7:0] raw, input invert);
     else if (v >= 9'sd127) pedal_axis = 8'hff;
     else                   pedal_axis = {v[6:0], v[6]};   // x2, saturating tail
 endfunction
-
-// O[18:17]: 0 = triggers on the right stick (LT/RT normally land on stick 2),
-//           1 = paddle, 2 = left-stick Y, 3 = digital only.
-`ifdef S32_OUTRUNNERS_ONLY
-wire [1:0] pedal_src = status[18:17];
-wire       steer_pad = status[19];
-`else
-wire [1:0] pedal_src = 2'd1;      // other profiles keep the historical paddle path
-wire       steer_pad = 1'b0;
-`endif
 
 // Accelerator: right-stick Y is the usual home of RT.  Stick "up" is negative,
 // so invert it into the pressed direction.
