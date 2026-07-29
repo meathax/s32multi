@@ -90,14 +90,16 @@ reg [7:0] ctl_latched [0:7];
 reg       render_count;             // MAME m_sprite_render_count (0/1)
 reg       render_after_erase;       // combined command: render after hidden erase
 reg       render_mon;               // monitor being presented, latched per pass
-// Multi 32 scan-buffer publish.  R_SWAP fires POST_VBLANK_CYCLES (~50 us) after
-// vblank ENDS, i.e. partway through line 0, but the display prefetches line 0
-// early during vblank at vcnt 261 (s32_core fb_rd_kick).  Flipping scan_buf at
-// R_SWAP therefore left line 0 fetched from the previous frame's buffer while
-// lines 1..223 came from the new one -- a corrupt top scanline, visible only
-// when consecutive frames differ there.  System 32 never had this because it
-// publishes at present_rise, before the prefetch.  Latch the swap here and
-// publish it at vblank start so Multi 32 follows the same discipline.
+// Multi 32 scan-buffer publish, matching the System 32 discipline.  The old
+// code flipped scan_buf inside R_SWAP, which fires POST_VBLANK_CYCLES (~50 us)
+// after vblank ENDS -- already inside the visible frame -- and later still
+// whenever the previous render ran long.  That produced two hardware-visible
+// faults: line 0 always came from the previous frame's buffer (it is
+// prefetched early, during vblank at vcnt 261), and any render overrun turned
+// the swap into a MID-FRAME buffer flip, top of the screen from one frame and
+// the bottom from the next.  The just-completed buffer is now latched at
+// R_DONE and published here only at vblank start, so every scanline of every
+// frame comes from one complete buffer.
 reg [1:0] pending_scan_buf;
 reg       pending_scan_valid;
 reg       erase_after_swap;         // combined command: swap before destructive clear
@@ -486,15 +488,17 @@ always @(posedge clk) begin
             debug_swap_count <= debug_sat_inc(debug_swap_count);
             disp_buf <= {1'b0, ~disp_buf[0]}; // bit0 is the sole A/B selector
             publish_on_done <= 1'b1;
-            if (is_multi32) begin
-                // Latch, do not publish.  disp_buf keeps flipping here so the
-                // CPU-visible controller status timing is untouched; only the
-                // buffer the mixer scans is deferred to the next vblank start,
-                // where it lands before the line-0 prefetch instead of after it.
-                pending_scan_buf   <= {1'b0, ~disp_buf[0]};
-                pending_scan_valid <= 1'b1;
-            end
-            else begin
+            // Multi 32 no longer touches scan_buf here.  R_SWAP fires ~50 us
+            // after vblank ENDS -- inside the visible frame -- and when a render
+            // ran long the whole sequence slips later still, so flipping the
+            // scanned buffer here produced a mid-frame swap: top of the screen
+            // from one frame, bottom from the next (sprites visibly jumping
+            // back and forth in gameplay, menus unaffected because their small
+            // lists never run long).  The just-rendered buffer is now latched at
+            // R_DONE and published at vblank start, the discipline System 32
+            // has always used.  disp_buf still flips here so the CPU-visible
+            // controller status timing is unchanged.
+            if (!is_multi32) begin
                 work_buf <= next_work;
                 erase_buf_sel <= next_work;
             end
@@ -1052,9 +1056,21 @@ always @(posedge clk) begin
             // A later completed frame supersedes an older unpresented one.
             // This can drop a frame after a genuine render overrun, but it can
             // never expose a partial buffer or write into the scanned buffer.
-            if (!is_multi32 && publish_on_done) begin
-                ready_buf <= work_buf;
-                ready_valid <= 1'b1;
+            // Multi 32 now carries the same guarantee: the buffer this sequence
+            // rendered into (~disp_buf[0], set at R_SWAP) is latched here, on
+            // completion, and published only at vblank start.  If the render
+            // overran the frame, the pending publish simply arrives a vblank
+            // late and the display repeats the previous complete frame -- a
+            // clean repeat instead of a mid-frame swap.
+            if (publish_on_done) begin
+                if (is_multi32) begin
+                    pending_scan_buf   <= {1'b0, ~disp_buf[0]};
+                    pending_scan_valid <= 1'b1;
+                end
+                else begin
+                    ready_buf <= work_buf;
+                    ready_valid <= 1'b1;
+                end
             end
             publish_on_done <= 1'b0;
             rs <= R_IDLE;
