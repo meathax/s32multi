@@ -172,6 +172,27 @@ always @(*) begin
     active_board.gun_aim           = 1'b0;
     active_board.coin_swap         = 1'b0;
     active_board.orunners          = 1'b1;
+`elsif S32_MULTI32_ONLY
+    // Four-game Multi 32 revision.  Only the three genuine per-game selectors
+    // stay live -- has_adc, has_ppi and orunners.  Pinning the rest is not
+    // cosmetic: while every strap is a runtime variable, Quartus must keep the
+    // System 32 arm of every mux downstream of it (gun aiming, the SegaSonic
+    // player packer, the GA2 PPI port C, the paddle analog paths), because
+    // those arms remain reachable in the netlist.
+    active_board.multi32           = 1'b1;
+    active_board.has_v25           = 1'b0;
+    active_board.v25_table         = 1'b0;
+    active_board.has_track         = 1'b0;
+    active_board.has_dsp_hle       = 1'b0;
+    active_board.has_cd_stub       = 1'b0;
+    active_board.dual_pcb          = 1'b0;
+    active_board.prot_sel          = PROT_NONE;
+    active_board.sprite_bank_valid = 1'b1;
+    active_board.sprite_bank_mask  = 2'b11;
+    active_board.flip_y            = 1'b0;
+    active_board.gun_aim           = 1'b0;
+    active_board.coin_swap         = 1'b0;
+    // has_adc / has_ppi / orunners deliberately left from board_desc.
 `endif
 end
 
@@ -662,11 +683,21 @@ function automatic [7:0] p_scross(input [31:0] j);
     p_scross = {~j[1], ~j[0], ~j[3], ~j[2], 2'b11, j[5], ~j[4]};
 endfunction
 
+`ifdef S32_M32_PROFILE
+// No Multi 32 board is a SegaSonic trackball cabinet, so the PROT_SONIC arm is
+// dead here.  Dropping it lets the sonic packer and its joystick_2 button tap
+// disappear instead of sitting behind a comparison against a constant.
+wire [7:0] core_p1a = m32_orunners ? orunners_shift_p1  :
+                      m32_harddunk ? p_dig4(joystick_0) :
+                      m32_scross   ? p_scross(joystick_0):
+                                     p_dig(joystick_0);
+`else
 wire [7:0] core_p1a = m32_orunners ? orunners_shift_p1 :
                       m32_harddunk ? p_dig4(joystick_0)  :
                       m32_scross   ? p_scross(joystick_0):
                       m32_titlef   ? p_dig(joystick_0)   :
                       (active_board.prot_sel == PROT_SONIC) ? sonic_p1a : p1a_dig;
+`endif
 wire [7:0] core_p2a = m32_orunners ? orunners_extra_p1 :
                       m32_harddunk ? p_dig4(joystick_1) :
                       m32_scross   ? 8'hff             :  // scross P2_A unused
@@ -809,20 +840,35 @@ wire [7:0] adc_ch [0:7];
 // banked RTL path because it is Multi 32; it simply never writes bank 1.
 wire [7:0] scross_steer_p1 = 8'hff - drive_steer_p1;   // PORT_REVERSE
 wire [7:0] scross_steer_p2 = 8'hff - drive_steer_p2;
+// On a Multi 32-only build the last arm of each channel is unreachable: the
+// only ADC users are orunners and scross, and a game with has_adc=0 never gets
+// sel_adc asserted at all.  Substituting the ADC rest value for the gun/paddle
+// sources is what actually lets Quartus delete the gun conditioning chain and
+// the paddle paths, rather than keeping them alive behind a runtime mux.
+`ifdef S32_M32_PROFILE
+localparam [7:0] ADC_IDLE = 8'h80;   // MSM6253 rest value
 assign adc_ch[0] = m32_scross ? scross_steer_p1 :
-                   active_board.orunners ? drive_steer_p1 : aim_sm[0]; // ANALOG1
+                   active_board.orunners ? drive_steer_p1 : ADC_IDLE;  // ANALOG1
 assign adc_ch[1] = m32_scross ? drive_accel_p1 :
-                   active_board.orunners ? drive_accel_p1 : aim_sm[1]; // ANALOG2
+                   active_board.orunners ? drive_accel_p1 : ADC_IDLE;  // ANALOG2
 assign adc_ch[2] = m32_scross ? scross_steer_p2 :
-                   active_board.orunners ? drive_brake_p1 : aim_sm[2]; // ANALOG3
+                   active_board.orunners ? drive_brake_p1 : ADC_IDLE;  // ANALOG3
 assign adc_ch[3] = m32_scross ? drive_accel_p2 :
-                   active_board.orunners ? drive_steer_p2 : aim_sm[3]; // ANALOG4
+                   active_board.orunners ? drive_steer_p2 : ADC_IDLE;  // ANALOG4
 assign adc_ch[4] = 8'h00;                                              // ANALOG5
 assign adc_ch[5] = 8'h00;                                              // ANALOG6
-assign adc_ch[6] = m32_scross ? 8'h00 :
-                   active_board.orunners ? drive_accel_p2 : paddle_0;  // ANALOG7
-assign adc_ch[7] = m32_scross ? 8'h00 :
-                   active_board.orunners ? drive_brake_p2 : paddle_1;  // ANALOG8
+assign adc_ch[6] = active_board.orunners ? drive_accel_p2 : 8'h00;     // ANALOG7
+assign adc_ch[7] = active_board.orunners ? drive_brake_p2 : 8'h00;     // ANALOG8
+`else
+assign adc_ch[0] = active_board.orunners ? drive_steer_p1 : aim_sm[0]; // ANALOG1
+assign adc_ch[1] = active_board.orunners ? drive_accel_p1 : aim_sm[1]; // ANALOG2
+assign adc_ch[2] = active_board.orunners ? drive_brake_p1 : aim_sm[2]; // ANALOG3
+assign adc_ch[3] = active_board.orunners ? drive_steer_p2 : aim_sm[3]; // ANALOG4
+assign adc_ch[4] = 8'h00;                                              // ANALOG5
+assign adc_ch[5] = 8'h00;                                              // ANALOG6
+assign adc_ch[6] = active_board.orunners ? drive_accel_p2 : paddle_0;  // ANALOG7
+assign adc_ch[7] = active_board.orunners ? drive_brake_p2 : paddle_1;  // ANALOG8
+`endif
 
 // trackballs from mouse
 reg        m_dv [0:2];
@@ -992,7 +1038,13 @@ s32_core core (
     // START3/START4 layout.
     .ppi_pa(m32_harddunk ? p_dig4(joystick_2) : p_dig(joystick_2)),
     .ppi_pb(m32_harddunk ? p_dig4(joystick_5) : p_dig(joystick_3)),
+`ifdef S32_M32_PROFILE
+    // Hard Dunk is the only PPI user on this profile, so the GA2 port-C packer
+    // (which also taps joystick_2/3 coin bits) is unreachable.
+    .ppi_pc(~{6'b0, joystick_5[10], joystick_2[10]}),
+`else
     .ppi_pc(m32_harddunk ? ~{6'b0, joystick_5[10], joystick_2[10]} : ga2_ppi_pc),
+`endif
     // Same OSD selector that steers the DDR line-fetch port, synchronised into
     // clk_ram; the sprite engine latches it once per render pass.
     .screen_sel(m32_screen_sync),
