@@ -199,6 +199,14 @@ localparam CONF_STR = {
 `endif
 `endif
     "O[12],Pause,Off,On;",
+`ifndef S32_RELEASE_MINIMAL
+    // status[11:8] drives the telemetry overlay.  Mode 9 is the sprite
+    // framebuffer underrun counter {sticky, count[15:0]}, which is the one
+    // that says whether DDR3 line service is actually missing its deadline on
+    // real hardware -- something simulation cannot answer because its DDR
+    // model is uncontended.
+    "O[11:8],Debug Video,Off,PC,Status,FirstROM,P1,Sprite,Input,FB,Palette,FB Underrun,Camera,V25;",
+`endif
 `ifndef S32_GOLDENAXE_ONLY
     "O[14:13],Analog Aim Invert,Off,X,Y,XY;",
 `endif
@@ -1107,12 +1115,22 @@ wire [23:0] debug_rgb = status[11:8] == 4'd1 ? core_debug_pc[23:0] :
                         status[11:8] == 4'd11 ? debug_v25_rgb :
                                                    game_rgb;
 `endif
+// The telemetry overlay was computed but never reached the output: rgb_out
+// took game_rgb directly, so every Debug Video mode was dead code and
+// selecting one showed normal video.  Route the selector in; its own chain
+// falls through to game_rgb for mode 0, so normal builds are unaffected.
+`ifndef S32_RELEASE_MINIMAL
+wire [23:0] shown_rgb = debug_rgb;
+`else
+wire [23:0] shown_rgb = game_rgb;
+`endif
+
 // Valid sync continues throughout startup. The solid colour identifies the
 // exact gate holding game logic: blue=download, red=ROM completion,
 // yellow=external/OSD reset. Normal game RGB takes over after boot.
 wire [23:0] rgb_out = ioctl_download ? 24'h0000C0 :
                         ~rom_loaded   ? 24'hC00000 :
-                        video_reset   ? 24'hC0C000 : game_rgb;
+                        video_reset   ? 24'hC0C000 : shown_rgb;
 
 assign CE_PIXEL = ce_pix_core;
 assign VGA_R  = rgb_out[23:16];

@@ -1,0 +1,30 @@
+set_global_assignment -name TOP_LEVEL_ENTITY sys_top
+# OutRunners INSTRUMENTED revision.  Same hardware profile as s32OutRunners but
+# with the telemetry overlay compiled in, for diagnosing the gameplay flicker on
+# real hardware.  Simulation clears the whole video path -- over 560 frames of
+# real ROM the sprite renderer overran 0 frames, the tilemap line renderer 0
+# lines and the sprite framebuffer 0 times -- so the remaining suspects are
+# things the Verilator harness idealises, above all DDR3 contention with the
+# HDMI scaler.  Debug Video mode 9 reports the framebuffer underrun counter and
+# answers that directly.  This revision is a measurement tool, not a release.
+source Arcade-SegaSystem32.qsf
+set_global_assignment -name VERILOG_MACRO "S32_OUTRUNNERS_ONLY=1"
+
+# NOTE: S32_RELEASE_MINIMAL is deliberately NOT set here.  That macro is what
+# strips debug_fb_underrun, the sprite counters and the overlay itself.
+
+set_global_assignment -name VERILOG_MACRO "S32_JT12_MLAB_SHIFTS=1"
+set_global_assignment -name VERILOG_MACRO "S32_V60_NO_FP=1"
+set_global_assignment -name VERILOG_MACRO "S32_JT12_LOGIC_ROMS=1"
+
+# The telemetry costs ALMs, so the line buffers stay in M10K here (the release
+# revision trades the other way).  Keeping the MLAB V60 ROM cache also matters:
+# this build must match the deployed core's fetch timing, or it would measure a
+# different machine than the one showing the fault.
+# S32_LINEBUF_MLAB and S32_NO_MLAB_ROM_CACHE are intentionally both unset.
+
+set_global_assignment -name OPTIMIZATION_MODE "BALANCED"
+set_global_assignment -name OPTIMIZATION_TECHNIQUE BALANCED
+set_global_assignment -name PHYSICAL_SYNTHESIS_COMBO_LOGIC_FOR_AREA OFF
+
+set_global_assignment -name LAST_QUARTUS_VERSION "17.0.2 Lite Edition"
