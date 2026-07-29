@@ -32,7 +32,7 @@ working on the target MiSTer setup; an X means it is not yet ready.
 | SegaSonic The Hedgehog | ✗ |
 | Hard Dunk | sim |
 | OutRunners | sim |
-| Stadium Cross | sim |
+| Stadium Cross | partial |
 | Title Fight | sim |
 | AS-1 Controller | ✗ |
 
@@ -41,6 +41,13 @@ Quartus revision. "sim" means the game boots and renders in the full-core
 Verilator harness with no CPU exceptions; it has **not** been run on hardware,
 and the cabinet input maps have not been checked against each game's own I/O
 test screen.
+
+"partial" for Stadium Cross is deliberate. Over 420 frames it runs clean —
+`exc=0`, no stuck-PC fault, no bus hang, and sprite output climbing steadily
+(66k → 798k pixels) — but the PC stays parked around `0x00000dab`–`0dc7` and
+VRAM/palette writes plateau while work-RAM writes keep climbing. That reads as
+a spin loop rather than attract mode, so it is not claimed as booting. The link
+board (`scrossa` is the linkable set) is the first thing to check.
 
 This revision targets the MiSTer **128 MB** SDRAM module specifically. That
 module carries two devices on one pin set, and the core refuses to leave reset
