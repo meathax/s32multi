@@ -206,6 +206,8 @@ localparam CONF_STR = {
     // real hardware -- something simulation cannot answer because its DDR
     // model is uncontended.
     "O[11:8],Debug Video,Off,PC,Status,FirstROM,P1,Sprite,Input,FB,Palette,FB Underrun,Camera,V25;",
+`elsif S32_DEBUG_FB_UNDERRUN
+    "O[11:8],Debug Video,Off,-,-,-,-,-,-,-,-,FB Underrun;",
 `endif
 `ifndef S32_GOLDENAXE_ONLY
     "O[14:13],Analog Aim Invert,Off,X,Y,XY;",
@@ -837,6 +839,9 @@ wire  [23:0] core_debug_fb_underrun; // PF-6: sprite line-fetch overrun telemetr
 wire  [15:0] core_debug_cam;         // spidman world-camera {page, display_lo}
 wire  [23:0] core_debug_v25;         // V25 bring-up flags/mailbox snoop
 wire  [89:0] core_debug_v25_img;     // MCU image hash sweep + first fetched line
+`elsif S32_DEBUG_FB_UNDERRUN
+// Narrow diagnostic build: this single counter, nothing else from the overlay.
+wire  [23:0] core_debug_fb_underrun;
 `endif
 
 s32_core core (
@@ -891,7 +896,12 @@ s32_core core (
     .debug_sprite_desc_valid(), .debug_sprite_last_desc(),
     .debug_sprite_last_draw_desc(), .debug_sprite_activity(),
     .debug_sprite_state(), .debug_sprite_counts(), .debug_sprite_rendering(),
-    .debug_sprram_cpu(), .debug_pal_rd(), .debug_fb_underrun(),
+    .debug_sprram_cpu(), .debug_pal_rd(),
+`ifdef S32_DEBUG_FB_UNDERRUN
+    .debug_fb_underrun(core_debug_fb_underrun),
+`else
+    .debug_fb_underrun(),
+`endif
     .debug_cam(), .debug_v25(), .debug_v25_img()
 `else
     .debug_pc(core_debug_pc), .debug_halted(core_debug_halted),
@@ -1121,6 +1131,14 @@ wire [23:0] debug_rgb = status[11:8] == 4'd1 ? core_debug_pc[23:0] :
 // falls through to game_rgb for mode 0, so normal builds are unaffected.
 `ifndef S32_RELEASE_MINIMAL
 wire [23:0] shown_rgb = debug_rgb;
+`elsif S32_DEBUG_FB_UNDERRUN
+// Narrow diagnostic: the full overlay fans 128-bit descriptor buses across the
+// device and the fitter could not route it (every seed crashed at 82% ALMs, so
+// congestion rather than capacity).  Answering "is DDR3 line service missing
+// its deadline on real hardware?" only needs one 24-bit counter, so compile in
+// that alone: {sticky ? 0xff : 0, underrun_count[15:0]}.  Any nonzero red
+// channel means the sprite framebuffer underran at least once.
+wire [23:0] shown_rgb = (status[11:8] == 4'd9) ? core_debug_fb_underrun : game_rgb;
 `else
 wire [23:0] shown_rgb = game_rgb;
 `endif

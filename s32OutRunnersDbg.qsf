@@ -10,18 +10,25 @@ set_global_assignment -name TOP_LEVEL_ENTITY sys_top
 source Arcade-SegaSystem32.qsf
 set_global_assignment -name VERILOG_MACRO "S32_OUTRUNNERS_ONLY=1"
 
-# NOTE: S32_RELEASE_MINIMAL is deliberately NOT set here.  That macro is what
-# strips debug_fb_underrun, the sprite counters and the overlay itself.
+# The FULL overlay does not route: with it compiled in, every fitter seed
+# crashed without a summary at only 34,299 ALMs (82%), so this is routing
+# congestion from fanning 128-bit descriptor buses across the device, not
+# capacity.  The question we actually need answered -- is DDR3 line service
+# missing its deadline on hardware? -- needs one 24-bit counter, so keep
+# RELEASE_MINIMAL and compile in that alone.
+set_global_assignment -name VERILOG_MACRO "S32_RELEASE_MINIMAL=1"
+set_global_assignment -name VERILOG_MACRO "S32_DEBUG_FB_UNDERRUN=1"
 
 set_global_assignment -name VERILOG_MACRO "S32_JT12_MLAB_SHIFTS=1"
 set_global_assignment -name VERILOG_MACRO "S32_V60_NO_FP=1"
 set_global_assignment -name VERILOG_MACRO "S32_JT12_LOGIC_ROMS=1"
 
-# The telemetry costs ALMs, so the line buffers stay in M10K here (the release
-# revision trades the other way).  Keeping the MLAB V60 ROM cache also matters:
-# this build must match the deployed core's fetch timing, or it would measure a
-# different machine than the one showing the fault.
-# S32_LINEBUF_MLAB and S32_NO_MLAB_ROM_CACHE are intentionally both unset.
+# Match the release revision's memory choices so this measures the same machine
+# that shows the fault: line buffers in MLAB, MLAB V60 ROM cache retained.
+set_global_assignment -name VERILOG_MACRO "S32_LINEBUF_MLAB=1"
+# S32_NO_MLAB_ROM_CACHE intentionally unset -- the deployed core has the MLAB
+# cache, and a diagnostic build with different fetch timing would be measuring
+# a different machine.
 
 set_global_assignment -name OPTIMIZATION_MODE "BALANCED"
 set_global_assignment -name OPTIMIZATION_TECHNIQUE BALANCED
