@@ -90,18 +90,13 @@ reg [7:0] ctl_latched [0:7];
 reg       render_count;             // MAME m_sprite_render_count (0/1)
 reg       render_after_erase;       // combined command: render after hidden erase
 reg       render_mon;               // monitor being presented, latched per pass
-// Multi 32 scan-buffer publish, matching the System 32 discipline.  The old
-// code flipped scan_buf inside R_SWAP, which fires POST_VBLANK_CYCLES (~50 us)
-// after vblank ENDS -- already inside the visible frame -- and later still
-// whenever the previous render ran long.  That produced two hardware-visible
-// faults: line 0 always came from the previous frame's buffer (it is
-// prefetched early, during vblank at vcnt 261), and any render overrun turned
-// the swap into a MID-FRAME buffer flip, top of the screen from one frame and
-// the bottom from the next.  The just-completed buffer is now latched at
-// R_DONE and published here only at vblank start, so every scanline of every
-// frame comes from one complete buffer.
-reg [1:0] pending_scan_buf;
-reg       pending_scan_valid;
+// Multi 32 now shares the System 32 publish path (ready_buf / ready_valid /
+// present_rise) rather than owning separate pending_* registers.  A first
+// attempt added its own pair, which cost ~0.5 ns of HOLD slack on clk_ram --
+// bare register-to-register copies with no combinational delay, in the domain
+// with the least margin (the previously qualified builds passed hold at only
+// +0.064 ns there).  Reusing the existing registers keeps the proven timing
+// structure and adds no new clk_ram state at all.
 reg       erase_after_swap;         // combined command: swap before destructive clear
 reg [1:0] erase_buf_sel;            // physical buffer selected for erase
 reg       erase_mon;                // Multi32 erase visits both monitors
@@ -329,8 +324,6 @@ always @(posedge clk) begin
         rs <= R_IDLE; rendering <= 0;
         disp_buf <= 2'b00;
         scan_buf <= 2'b00;
-        pending_scan_buf <= 2'b00;
-        pending_scan_valid <= 1'b0;
         debug_first_rom_desc <= 128'd0;
         debug_first_rom_valid <= 1'b0;
         debug_last_desc <= 128'd0;
@@ -390,15 +383,9 @@ always @(posedge clk) begin
         // but publishes at the same point for the same reason: its R_SWAP lands
         // ~50 us after vblank ENDS, which is already inside line 0 and therefore
         // after that line has been fetched.
-        if (present_rise) begin
-            if (!is_multi32 && ready_valid) begin
-                scan_buf <= ready_buf;
-                ready_valid <= 1'b0;
-            end
-            else if (is_multi32 && pending_scan_valid) begin
-                scan_buf <= pending_scan_buf;
-                pending_scan_valid <= 1'b0;
-            end
+        if (present_rise && ready_valid) begin
+            scan_buf <= ready_buf;
+            ready_valid <= 1'b0;
         end
 
         // audit R20 SP-3: a vblank pulse arriving while the FSM is still
@@ -1062,15 +1049,11 @@ always @(posedge clk) begin
             // overran the frame, the pending publish simply arrives a vblank
             // late and the display repeats the previous complete frame -- a
             // clean repeat instead of a mid-frame swap.
+            // Multi 32 renders into ~disp_buf[0] (fb_wr_buf), System 32 into
+            // work_buf; both publish through the same registers.
             if (publish_on_done) begin
-                if (is_multi32) begin
-                    pending_scan_buf   <= {1'b0, ~disp_buf[0]};
-                    pending_scan_valid <= 1'b1;
-                end
-                else begin
-                    ready_buf <= work_buf;
-                    ready_valid <= 1'b1;
-                end
+                ready_buf   <= is_multi32 ? {1'b0, ~disp_buf[0]} : work_buf;
+                ready_valid <= 1'b1;
             end
             publish_on_done <= 1'b0;
             rs <= R_IDLE;
