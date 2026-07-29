@@ -12,3 +12,6 @@ set_global_assignment -name ADV_NETLIST_OPT_SYNTH_WYSIWYG_REMAP ON
 set_global_assignment -name SYNTH_GATED_CLOCK_CONVERSION ON
 set_global_assignment -name PRE_MAPPING_RESYNTHESIS ON
 set_global_assignment -name AUTO_RESOURCE_SHARING ON
+set_global_assignment -name NUM_PARALLEL_PROCESSORS 4
+set_global_assignment -name SMART_RECOMPILE ON
+set_global_assignment -name SAVE_DISK_SPACE OFF

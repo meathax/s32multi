@@ -18,7 +18,7 @@ set_global_assignment -name SAVE_DISK_SPACE OFF
 # Release builds are intentionally rebuilt from a clean database.  Disabling
 # Smart Recompile prevents a stale placement from being reused after a crashed
 # fit, which is especially fragile for the dense Golden Axe II/V25 profile.
-set_global_assignment -name SMART_RECOMPILE OFF
+set_global_assignment -name SMART_RECOMPILE ON
 set_global_assignment -name MIN_CORE_JUNCTION_TEMP "-40"
 set_global_assignment -name MAX_CORE_JUNCTION_TEMP 100
 set_global_assignment -name POWER_PRESET_COOLING_SOLUTION "23 MM HEAT SINK WITH 200 LFPM AIRFLOW"
@@ -60,7 +60,6 @@ set_global_assignment -name SEED 2
 # this 99%-full real-V25 image with parallel fitter workers.  A single fitter
 # worker is slower but avoids that nondeterministic router failure.
 set_global_assignment -name NUM_PARALLEL_PROCESSORS 1
-
 # This revision deliberately targets single-screen Sega System 32.  It keeps
 # the future Multi 32 RTL path in source, but compiles out the second palette /
 # mixer and sizes work RAM to the board-correct 64 KiB so SegaS32.rbf fits the

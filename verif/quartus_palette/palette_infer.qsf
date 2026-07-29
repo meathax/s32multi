@@ -4,3 +4,6 @@ set_global_assignment -name TOP_LEVEL_ENTITY palette_infer_top
 set_global_assignment -name PROJECT_OUTPUT_DIRECTORY output
 set_global_assignment -name SYSTEMVERILOG_FILE palette_infer_top.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/video/s32_palette.sv
+set_global_assignment -name NUM_PARALLEL_PROCESSORS 4
+set_global_assignment -name SMART_RECOMPILE ON
+set_global_assignment -name SAVE_DISK_SPACE OFF

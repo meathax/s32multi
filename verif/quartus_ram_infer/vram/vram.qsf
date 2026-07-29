@@ -3,3 +3,6 @@ set_global_assignment -name DEVICE 5CSEBA6U23I7
 set_global_assignment -name TOP_LEVEL_ENTITY infer_vram
 set_global_assignment -name SYSTEMVERILOG_FILE ../../../rtl/video/s32_big_dpram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../ram_shapes.sv
+set_global_assignment -name NUM_PARALLEL_PROCESSORS 4
+set_global_assignment -name SMART_RECOMPILE ON
+set_global_assignment -name SAVE_DISK_SPACE OFF

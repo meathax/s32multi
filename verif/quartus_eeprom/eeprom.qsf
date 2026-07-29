@@ -5,3 +5,6 @@ set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/s32_pkg.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/io/s32_io.sv
 set_global_assignment -name OPTIMIZATION_MODE "AGGRESSIVE AREA"
 set_global_assignment -name OPTIMIZATION_TECHNIQUE AREA
+set_global_assignment -name NUM_PARALLEL_PROCESSORS 4
+set_global_assignment -name SMART_RECOMPILE ON
+set_global_assignment -name SAVE_DISK_SPACE OFF
