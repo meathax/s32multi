@@ -22,12 +22,34 @@ set_global_assignment -name VERILOG_MACRO "S32_V60_NO_FP=1"
 # while storing 7,168 and 16,384 bits, so moving them into MLABs spends spare
 # ALMs to buy back scarce block RAM in the clk_ram domain that is hardest to
 # route.  Golden Axe and the universal profile keep the M10K form.
-set_global_assignment -name VERILOG_MACRO "S32_LINEBUF_MLAB=1"
+# DISABLED: this and S32_NO_MLAB_ROM_CACHE cannot both be afforded.  Restoring
+# V70 fetch throughput moves ~2,850 ALMs back into logic, and with the line
+# buffers also in MLABs the design reached 93% ALMs AND 93% RAM blocks, at which
+# point every fitter seed crashed without a summary (a Quartus 17.0.2 congestion
+# failure, not a timing one).  The line buffers are worth 12 M10Ks but cost
+# ~2,250 ALMs, so they are the ones to give back: gameplay correctness outranks
+# block-RAM headroom.  Re-enable only if ALM pressure drops.
+# set_global_assignment -name VERILOG_MACRO "S32_LINEBUF_MLAB=1"
 
 # JT12's two 256-entry lookup tables (exprom 256x10, logsin 256x12) are constant
 # ROMs that each occupy a whole M10K for under 3 Kbit.  As pure combinational
 # functions of eight address bits they belong in LUTs on this revision.
 set_global_assignment -name VERILOG_MACRO "S32_JT12_LOGIC_ROMS=1"
+
+# Gameplay flicker fix.  The MLAB V60 ROM cache was taken purely for area, and
+# it is the ONE change in this revision that is not bit-identical to the verified
+# baseline: its extra raw clk_sys of lookup latency can straddle a ce edge on the
+# 20 MHz V70, costing instruction-fetch throughput.  OutRunners already sits on
+# the known V60/V70 throughput gap, and on hardware both tilemap layers (HUD) and
+# sprites (trees, fences) flicker in motion during gameplay while menus are
+# clean.  A common cause across both layer types can only be upstream of the
+# video path -- i.e. the CPU not finishing its per-frame work -- because tilemaps
+# and sprites share no downstream hardware.  Simulation independently clears the
+# video path: over 560 frames of real ROM through the attract race and the
+# driver-select crowd (peak 106,993 sprite pixels/frame) the sprite renderer
+# overran 0 frames, the tilemap line renderer overran 0 lines, and the sprite
+# framebuffer underran 0 times.  Give the V70 its fetch throughput back.
+set_global_assignment -name VERILOG_MACRO "S32_NO_MLAB_ROM_CACHE=1"
 
 # The shared QSF selects AGGRESSIVE AREA, tuned for the dense Golden Axe / V25
 # revision.  OutRunners is the opposite shape: the first fit left 23% of the

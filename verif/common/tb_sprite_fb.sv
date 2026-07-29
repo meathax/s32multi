@@ -48,7 +48,7 @@ wire        rendering;
 
 reg vblank = 0;
 s32_sprite sprite (
-    .clk(clk), .rst(rst), .is_multi32(1'b0),
+    .clk(clk), .rst(rst), .is_multi32(1'b0), .screen_sel(1'b0),
     .srom_bank_mask(2'b11),
     .present(vblank), .vblank(vblank), .rendering(rendering),
     .debug_first_rom_desc(), .debug_first_rom_valid(),

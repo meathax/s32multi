@@ -115,7 +115,7 @@ s32_sprite_write_debug cpu_write_debug (
 );
 
 s32_sprite #(.POST_VBLANK_CYCLES(4)) dut (
-    .clk(clk), .rst(rst), .is_multi32(is_multi32),
+    .clk(clk), .rst(rst), .is_multi32(is_multi32), .screen_sel(1'b0),
     .srom_bank_mask(srom_bank_mask),
     .present(vblank), .vblank(vblank), .rendering(dbg_rendering),
     .debug_first_rom_desc(dbg_first_desc),

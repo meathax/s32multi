@@ -131,6 +131,11 @@ module s32_core #(
     input       [7:0] trk_btn [0:2],
     input       [7:0] ppi_pa, ppi_pb, ppi_pc,
 
+    // Multi 32 presents one of its two monitors at a time.  The sprite engine
+    // uses this to retire descriptors belonging to the hidden monitor without
+    // drawing them; the board still renders both palettes/mixers.
+    input             screen_sel,
+
     // video out (screen A; screen B via second mixer on M32)
     output     [23:0] rgb_a,
     output     [23:0] rgb_b,
@@ -648,6 +653,7 @@ s32_sprite #(
 `endif
 ) sprite (
     .clk(clk_ram), .rst(rst), .is_multi32(is_multi32),
+    .screen_sel(screen_sel),
     // Old MRAs predate bank metadata and therefore retain the original
     // four-bank address space. New descriptors mirror 4/8 MiB ROMs exactly.
     .srom_bank_mask(cfg_sprite_bank_valid ? cfg_sprite_bank_mask : 2'b11),

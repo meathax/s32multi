@@ -117,6 +117,7 @@ wire  [5:0] eep_rd_addr;
 wire [15:0] eep_rd_data;
 wire [31:0] joystick_0, joystick_1, joystick_2, joystick_3, joystick_4, joystick_5;
 wire [15:0] joystick_l_analog_0, joystick_l_analog_1;
+wire [15:0] joystick_r_analog_0, joystick_r_analog_1;
 wire  [7:0] paddle_0, paddle_1;
 wire [24:0] ps2_mouse;
 // Dedicated game RBFs have fixed physical board straps. Keep board_desc as
@@ -200,6 +201,15 @@ localparam CONF_STR = {
     "O[12],Pause,Off,On;",
 `ifndef S32_GOLDENAXE_ONLY
     "O[14:13],Analog Aim Invert,Off,X,Y,XY;",
+`endif
+`ifdef S32_OUTRUNNERS_ONLY
+    // MiSTer has no dedicated analog-trigger signal: Linux reports XInput
+    // LT/RT as ABS_Z/ABS_RZ and the mapper lands them on the SECOND stick's
+    // axes, so "right trigger" normally arrives as joystick_r_analog_0.  That
+    // is pad-dependent, so expose the pedal source rather than hardwiring a
+    // guess.  Digital buttons stay active as an override in every setting.
+    "O[18:17],Pedals,Triggers (R-Stick),Paddle,L-Stick Y,Digital;",
+    "O[19],Steering,L-Stick X,Paddle;",
 `endif
     "-;",
     "R[0],Reset;",
@@ -341,6 +351,8 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io (
     .joystick_5(joystick_5),
     .joystick_l_analog_0(joystick_l_analog_0),
     .joystick_l_analog_1(joystick_l_analog_1),
+    .joystick_r_analog_0(joystick_r_analog_0),
+    .joystick_r_analog_1(joystick_r_analog_1),
     .paddle_0(paddle_0),
     .paddle_1(paddle_1),
     .ps2_mouse(ps2_mouse)
@@ -636,18 +648,61 @@ always @(posedge clk_sys) begin
     end
 end
 
+// Steering rests at 0x80 (MAME orunners ANALOG1/4 are IPT_PADDLE with a 0x80
+// default), so the signed stick axis converts through the offset-binary path.
+// D-pad left/right stay as digital full-lock.  O[19] offers the paddle/spinner
+// instead for wheel-style controllers, which already report 0x80-centred.
+wire [7:0] steer_an_p1 = steer_pad ? paddle_0 : aim_axis(joystick_l_analog_0[7:0], 1'b0);
+wire [7:0] steer_an_p2 = steer_pad ? paddle_1 : aim_axis(joystick_l_analog_1[7:0], 1'b0);
 wire [7:0] drive_steer_p1 = joystick_0[1] ? 8'h00 :
-                            joystick_0[0] ? 8'hff :
-                            aim_axis(joystick_l_analog_0[7:0], 1'b0);
+                            joystick_0[0] ? 8'hff : steer_an_p1;
 wire [7:0] drive_steer_p2 = joystick_1[1] ? 8'h00 :
-                            joystick_1[0] ? 8'hff :
-                            aim_axis(joystick_l_analog_1[7:0], 1'b0);
-wire [7:0] drive_accel_p1 = (paddle_0 != 8'h00) ? paddle_0 :
-                            joystick_0[3] ? 8'hff : 8'h00;
-wire [7:0] drive_accel_p2 = (paddle_1 != 8'h00) ? paddle_1 :
-                            joystick_1[3] ? 8'hff : 8'h00;
-wire [7:0] drive_brake_p1 = (joystick_0[9] || joystick_0[2]) ? 8'hff : 8'h00;
-wire [7:0] drive_brake_p2 = (joystick_1[9] || joystick_1[2]) ? 8'hff : 8'h00;
+                            joystick_1[0] ? 8'hff : steer_an_p2;
+// --- Pedals ---------------------------------------------------------------
+// A pedal is a ONE-SIDED control: released reads 0x00, floored reads 0xff
+// (MAME orunners: IPT_PEDAL/IPT_PEDAL2 with a 0x00 default, unlike the two
+// steering channels which rest at 0x80).  A MiSTer analog axis is signed and
+// rests at 0, so take only the pressed half and scale it to the full 8-bit
+// pedal range; anything on the other side of centre is simply "not pressed".
+// Without this the axis fought the 0x80-centred conversion used for steering.
+function automatic [7:0] pedal_axis(input [7:0] raw, input invert);
+    logic signed [8:0] v;
+    v = invert ? -$signed({raw[7], raw}) : $signed({raw[7], raw});
+    if (v <= 9'sd0)        pedal_axis = 8'h00;
+    else if (v >= 9'sd127) pedal_axis = 8'hff;
+    else                   pedal_axis = {v[6:0], v[6]};   // x2, saturating tail
+endfunction
+
+// O[18:17]: 0 = triggers on the right stick (LT/RT normally land on stick 2),
+//           1 = paddle, 2 = left-stick Y, 3 = digital only.
+`ifdef S32_OUTRUNNERS_ONLY
+wire [1:0] pedal_src = status[18:17];
+wire       steer_pad = status[19];
+`else
+wire [1:0] pedal_src = 2'd1;      // other profiles keep the historical paddle path
+wire       steer_pad = 1'b0;
+`endif
+
+// Accelerator: right-stick Y is the usual home of RT.  Stick "up" is negative,
+// so invert it into the pressed direction.
+wire [7:0] accel_an_p1 = (pedal_src == 2'd0) ? pedal_axis(joystick_r_analog_0[15:8], 1'b1) :
+                         (pedal_src == 2'd1) ? paddle_0 :
+                         (pedal_src == 2'd2) ? pedal_axis(joystick_l_analog_0[15:8], 1'b1) :
+                                               8'h00;
+wire [7:0] accel_an_p2 = (pedal_src == 2'd0) ? pedal_axis(joystick_r_analog_1[15:8], 1'b1) :
+                         (pedal_src == 2'd1) ? paddle_1 :
+                         (pedal_src == 2'd2) ? pedal_axis(joystick_l_analog_1[15:8], 1'b1) :
+                                               8'h00;
+// Brake: right-stick X is where LT normally lands on the same pads.
+wire [7:0] brake_an_p1 = (pedal_src == 2'd0) ? pedal_axis(joystick_r_analog_0[7:0], 1'b0) : 8'h00;
+wire [7:0] brake_an_p2 = (pedal_src == 2'd0) ? pedal_axis(joystick_r_analog_1[7:0], 1'b0) : 8'h00;
+
+// Digital buttons remain a full-scale override in every mode, so an unmapped
+// axis can never leave the car undriveable.
+wire [7:0] drive_accel_p1 = joystick_0[3] ? 8'hff : accel_an_p1;
+wire [7:0] drive_accel_p2 = joystick_1[3] ? 8'hff : accel_an_p2;
+wire [7:0] drive_brake_p1 = (joystick_0[9] || joystick_0[2]) ? 8'hff : brake_an_p1;
+wire [7:0] drive_brake_p2 = (joystick_1[9] || joystick_1[2]) ? 8'hff : brake_an_p2;
 
 wire [7:0] adc_ch [0:7];
 assign adc_ch[0] = active_board.orunners ? drive_steer_p1 : aim_sm[0]; // ANALOG1
@@ -814,6 +869,9 @@ s32_core core (
     .adc_ch(adc_ch),
     .trk_dv(trk_dv_a), .trk_dx(trk_dx_a), .trk_dy(trk_dy_a), .trk_btn(trk_btn),
     .ppi_pa(p_dig(joystick_2)), .ppi_pb(p_dig(joystick_3)), .ppi_pc(ga2_ppi_pc),
+    // Same OSD selector that steers the DDR line-fetch port, synchronised into
+    // clk_ram; the sprite engine latches it once per render pass.
+    .screen_sel(m32_screen_sync),
     .rgb_a(rgb_a), .rgb_b(rgb_b),
     .ce_pix(ce_pix_core),
     .hs(core_hs), .vs(core_vs), .hb(core_hb), .vb(core_vb),

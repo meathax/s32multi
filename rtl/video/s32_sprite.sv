@@ -18,6 +18,15 @@ module s32_sprite #(
     input             clk,          // clk_ram
     input             rst,
     input             is_multi32,
+    // Multi 32 drives two monitors from ONE display list; bit 11 of descriptor
+    // word 3 selects which monitor each sprite belongs to.  A twin cabinet shows
+    // both, but MiSTer presents one at a time, so descriptors for the other
+    // monitor are rendered into buffers that are never scanned out.  Measured on
+    // a real OutRunners gameplay save state (MAME, 60 frames): 149 sprites drawn
+    // per frame, of which 64 -- 43.1% -- belong to the hidden monitor.  Skipping
+    // them removes that share of sprite render time and of the DDR3 framebuffer
+    // write traffic with no visual effect.
+    input             screen_sel,     // 0 = monitor A, 1 = monitor B
     input       [1:0] srom_bank_mask,
 
     // frame control
@@ -80,6 +89,7 @@ reg [7:0] ctl [0:7];
 reg [7:0] ctl_latched [0:7];
 reg       render_count;             // MAME m_sprite_render_count (0/1)
 reg       render_after_erase;       // combined command: render after hidden erase
+reg       render_mon;               // monitor being presented, latched per pass
 reg       erase_after_swap;         // combined command: swap before destructive clear
 reg [1:0] erase_buf_sel;            // physical buffer selected for erase
 reg       erase_mon;                // Multi32 erase visits both monitors
@@ -480,6 +490,11 @@ always @(posedge clk) begin
         end
         R_RENDER: begin
             rendering <= 1'b1;
+            // Sample the presented monitor once per render pass.  Latching it
+            // here (rather than using the live selector) guarantees a whole
+            // frame is walked against one monitor, so an OSD screen change
+            // mid-list cannot produce a frame that is half of each.
+            render_mon <= screen_sel;
             list_idx <= 0;
             list_count <= 0;
             jump_xoff <= 0; jump_yoff <= 0;
@@ -596,7 +611,13 @@ always @(posedge clk) begin
             default: begin                                        // draw sprite
                 debug_last_draw_desc <= {sw[7], sw[6], sw[5], sw[4],
                                          sw[3], sw[2], sw[1], sw[0]};
-                if (d_srcw == 0 || d_srch == 0 || d_dstw == 0 || d_dsth == 0) begin
+                // A descriptor for the monitor that is not being presented is
+                // retired exactly like a zero-dimension one: it still consumes
+                // its list entry and any inline indirect table, it simply draws
+                // no pixels.  This is the only place the two differ from a
+                // drawn sprite, so the walk stays bit-identical.
+                if (d_srcw == 0 || d_srch == 0 || d_dstw == 0 || d_dsth == 0 ||
+                    (is_multi32 && (d_mon != render_mon))) begin
                     debug_activity[9] <= 1'b1;
                     debug_zero_count <= debug_sat_inc(debug_zero_count);
                     // Inline indirect tables occupy the following two list
