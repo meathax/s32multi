@@ -37,7 +37,7 @@ board_desc_t board = '0;
 
 reg [15:0] rom [0:8191];
 wire        p0_req;
-wire [24:1] p0_addr;
+wire [26:1] p0_addr;
 reg  [15:0] p0_dout;
 reg         p0_ack;
 always @(posedge clk_sys) begin
@@ -57,8 +57,8 @@ for (genvar gt=0; gt<3; gt++) begin
     assign tdv[gt]=0; assign tdx[gt]=0; assign tdy[gt]=0; assign tbn[gt]=8'hff;
 end
 
-wire        p1_req; wire [24:3] p1_addr; reg [63:0] p1_dout; reg p1_ack;
-wire        p2_req; wire [24:4] p2_addr; reg [127:0] p2_dout; reg p2_ack;
+wire        p1_req; wire [26:3] p1_addr; reg [63:0] p1_dout; reg p1_ack;
+wire        p2_req; wire [26:4] p2_addr; reg [127:0] p2_dout; reg p2_ack;
 always @(posedge clk_ram) begin
     p1_ack  <= p1_req & ~p1_ack;
     p1_dout <= 64'h1111_2222_3333_4444;

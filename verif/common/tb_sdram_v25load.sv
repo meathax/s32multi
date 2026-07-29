@@ -30,19 +30,19 @@ reg         mem_oe = 1'b0;
 assign SDRAM_DQ = mem_oe ? mem_dq : 16'hzzzz;
 
 reg        wr_req = 1'b0;
-reg [24:1] wr_addr = '0;
+reg [26:1] wr_addr = '0;
 reg [15:0] wr_din = '0;
 reg [1:0]  wr_be = 2'b11;
 wire       wr_ack;
 
 // unused ports
 reg p0_req=0,p1_req=0,p2_req=0,p3_req=0,p4_req=0;
-reg [24:1] p0_addr=0,p3_addr=0,p4_addr=0; reg [24:3] p1_addr=0; reg [24:4] p2_addr=0;
+reg [26:1] p0_addr=0,p3_addr=0,p4_addr=0; reg [26:3] p1_addr=0; reg [26:4] p2_addr=0;
 wire [15:0] p0_dout,p3_dout,p4_dout; wire [63:0] p1_dout; wire [127:0] p2_dout;
 wire p0_ack,p1_ack,p2_ack,p3_ack,p4_ack;
 
 reg        p5_req = 1'b0;
-reg [24:3] p5_addr = '0;
+reg [26:3] p5_addr = '0;
 wire [63:0] p5_dout;
 wire       p5_ack;
 
@@ -65,32 +65,35 @@ sdram dut (
 // Behavioural SDR SDRAM storage model: real array, DQM-masked writes,
 // CL2 reads.  Sampled on negedge like the proven tb_sdram read model.
 // ------------------------------------------------------------------
-localparam [3:0] C_ACT=4'b0011, C_WRITE=4'b0100, C_READ=4'b0101;
-wire [3:0] cmd_bus = {SDRAM_nCS, SDRAM_nRAS, SDRAM_nCAS, SDRAM_nWE};
+localparam [2:0] C_ACT=3'b011, C_WRITE=3'b100, C_READ=3'b101;
+// nCS is the DEVICE SELECT on the 128 MB module, not a command bit.
+wire [2:0] cmd_bus = {SDRAM_nRAS, SDRAM_nCAS, SDRAM_nWE};
+wire       chip_bus = SDRAM_nCS;
 
-logic [15:0] store [longint];   // {bank[1:0], row[12:0], col[9:0]} -> word
-reg   [12:0] arow [0:3];
+logic [15:0] store [longint];   // {chip, bank[1:0], row[12:0], col[9:0]} -> word
+reg   [12:0] arow [0:1][0:3];
 reg   [1:0]  rd_valid;
 longint      rd_addr [0:1];
 
-function automatic longint lin(input [1:0] bank, input [12:0] row, input [9:0] col);
-    lin = {bank, row, col};
+function automatic longint lin(input chip, input [1:0] bank, input [12:0] row, input [9:0] col);
+    lin = {chip, bank, row, col};
 endfunction
 
 always @(negedge clk) begin
-    if (cmd_bus == C_ACT) arow[SDRAM_BA] <= SDRAM_A[12:0];
+    if (cmd_bus == C_ACT) arow[chip_bus][SDRAM_BA] <= SDRAM_A[12:0];
     if (cmd_bus == C_WRITE) begin
         longint wa; logic [15:0] cur;
-        wa  = lin(SDRAM_BA, arow[SDRAM_BA], SDRAM_A[9:0]);
+        wa  = lin(chip_bus, SDRAM_BA, arow[chip_bus][SDRAM_BA], {SDRAM_A[9], SDRAM_A[8:0]});
         cur = store.exists(wa) ? store[wa] : 16'h0000;
-        if (!SDRAM_DQML) cur[7:0]  = SDRAM_DQ[7:0];   // DQM low = 0 -> write low byte
-        if (!SDRAM_DQMH) cur[15:8] = SDRAM_DQ[15:8];  // DQM high = 0 -> write high byte
+        // DQM is the shorted A[12:11] net on this module.
+        if (!SDRAM_A[11]) cur[7:0]  = SDRAM_DQ[7:0];
+        if (!SDRAM_A[12]) cur[15:8] = SDRAM_DQ[15:8];
         store[wa] = cur;
     end
     rd_valid[1] <= rd_valid[0];
     rd_valid[0] <= (cmd_bus == C_READ);
     rd_addr[1]  <= rd_addr[0];
-    rd_addr[0]  <= lin(SDRAM_BA, arow[SDRAM_BA], SDRAM_A[9:0]);
+    rd_addr[0]  <= lin(chip_bus, SDRAM_BA, arow[chip_bus][SDRAM_BA], {SDRAM_A[9], SDRAM_A[8:0]});
     mem_oe = rd_valid[1];
     if (rd_valid[1]) mem_dq = store.exists(rd_addr[1]) ? store[rd_addr[1]] : 16'h0000;
 end
@@ -98,9 +101,9 @@ end
 // ------------------------------------------------------------------
 // SDR_MCU_BASE (word address).  Matches rtl/s32_pkg SDR_MCU_BASE=0x0E00000.
 // ------------------------------------------------------------------
-localparam [24:1] MCU_WBASE = 24'h700000;   // 0x0E00000 >> 1
+localparam [26:1] MCU_WBASE = 26'h0700000;  // SDR_MCU_BASE (0x0E00000) >> 1
 
-task automatic wr_byte(input [24:1] waddr, input lane_hi, input [7:0] b);
+task automatic wr_byte(input [26:1] waddr, input lane_hi, input [7:0] b);
     begin
         @(negedge clk);
         wr_addr = waddr; wr_din = {b, b}; wr_be = lane_hi ? 2'b10 : 2'b01; wr_req = 1'b1;
@@ -120,7 +123,7 @@ integer errors = 0;
 task automatic p5_read_block(input [16:0] off, input [63:0] expw);
     integer t;
     begin
-        @(negedge clk); p5_addr = MCU_WBASE[24:3] + off[16:3]; p5_req = 1'b1;
+        @(negedge clk); p5_addr = MCU_WBASE[26:3] + off[16:3]; p5_req = 1'b1;
         @(negedge clk); p5_req = 1'b0;
         t = 0; while (!p5_ack && t < 200) begin @(posedge clk); #1; t = t + 1; end
         if (!p5_ack) begin $display("FAIL p5 read timeout off=%05x", off); errors = errors + 1; end
@@ -139,7 +142,7 @@ integer i, blk, t2;
 reg [63:0] eword;
 localparam integer NBYTES = 2048;     // 256 p5 blocks
 initial begin
-    for (i=0;i<4;i=i+1) arow[i] = 13'd0;
+    for (i=0;i<4;i=i+1) begin arow[0][i] = 13'd0; arow[1][i] = 13'd0; end
     rd_valid = 2'b00;
     repeat (4) @(posedge clk);
     @(negedge clk); init = 1'b0;

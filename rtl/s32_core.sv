@@ -62,27 +62,27 @@ module s32_core #(
 
     // SDRAM ports (to sdram.sv in emu top)
     output            sdr_p0_req,
-    output     [24:1] sdr_p0_addr,
+    output     [26:1] sdr_p0_addr,
     input      [15:0] sdr_p0_dout,
     input             sdr_p0_ack,
     output            sdr_p1_req,
-    output     [24:3] sdr_p1_addr,
+    output     [26:3] sdr_p1_addr,
     input      [63:0] sdr_p1_dout,
     input             sdr_p1_ack,
     output            sdr_p2_req,
-    output     [24:4] sdr_p2_addr,
+    output     [26:4] sdr_p2_addr,
     input     [127:0] sdr_p2_dout,
     input             sdr_p2_ack,
     output            sdr_p3_req,
-    output     [24:1] sdr_p3_addr,
+    output     [26:1] sdr_p3_addr,
     input      [15:0] sdr_p3_dout,
     input             sdr_p3_ack,
     output            sdr_p4_req,
-    output     [24:1] sdr_p4_addr,
+    output     [26:1] sdr_p4_addr,
     input      [15:0] sdr_p4_dout,
     input             sdr_p4_ack,
     output            sdr_p5_req,
-    output     [24:3] sdr_p5_addr,
+    output     [26:3] sdr_p5_addr,
     input      [63:0] sdr_p5_dout,
     input             sdr_p5_ack,
 
@@ -639,7 +639,7 @@ s32_tilemap tilemap (
 // The 4 MB tile region begins at the non-power-of-two-aligned 0x600000.
 // Concatenating only the high address bits placed reads at 0x400000 and would
 // fetch sound ROM on hardware; add the renderer's region-local row address.
-assign sdr_p1_addr = SDR_TILES_BASE[24:3] + {3'b000, tile_rom_addr};
+assign sdr_p1_addr = SDR_TILES_BASE[26:3] + {3'b000, tile_rom_addr};
 
 // sprite engine
 wire [7:0] sprctl_q;
@@ -682,7 +682,10 @@ s32_sprite #(
     .fb_er_ack(fb_er_ack),
     .disp_buf(disp_buf), .scan_buf(spr_scan_buf)
 );
-assign sdr_p2_addr[24] = 1'b1;   // sprites region base 0x1000000
+// Sprite region base.  The sprite engine emits a region-local 24-bit byte
+// address (srom_addr[23:4]); the base supplies everything above it, so the base
+// must stay 16 MB aligned for this to remain a concatenation rather than an add.
+assign sdr_p2_addr[26:24] = SDR_SPRITES_BASE[26:24];
 
 // TM-1: CRT/tilemap screen-width authority is VRAM $1FF00 bit 15, matching
 // MAME screen_update_system32 / multi32_update, which set the visible area to
@@ -884,8 +887,8 @@ s32_soundsys #(.SYSTEM32_ONLY(SYSTEM32_ONLY), .MULTI32_ONLY(OUTRUNNERS_ONLY)) so
 );
 // B1: SDRAM address hookup for sound ports — add region bases so fetches
 // land in the soundcpu / multipcm regions instead of address 0.
-assign sdr_p3_addr = SDR_SOUNDCPU_BASE[24:1] + {1'b0, zrom_ba[23:1]};
-assign sdr_p4_addr = SDR_MULTIPCM_BASE[24:1] + {3'b000, mpcm_ba[21:1]};
+assign sdr_p3_addr = SDR_SOUNDCPU_BASE[26:1] + {1'b0, zrom_ba[23:1]};
+assign sdr_p4_addr = SDR_MULTIPCM_BASE[26:1] + {3'b000, mpcm_ba[21:1]};
 
 // ---------------------------------------------------------------------------
 // IO-7: S32COMM shared RAM + host-side flip-flops. The communication board is
@@ -1322,10 +1325,10 @@ s32_v25 v25 (
 // the clk_sys -> clk_ram controller crossing.  Both requesters tolerate the
 // one-cycle latency (the bridge and the sweep wait on sdr_p5_ack levels).
 reg        sdr_p5_req_r;
-reg [24:3] sdr_p5_addr_r;
+reg [26:3] sdr_p5_addr_r;
 always @(posedge clk_sys) begin
     sdr_p5_req_r  <= sweep_active ? sweep_req_r : v25_p5_req;
-    sdr_p5_addr_r <= SDR_MCU_BASE[24:3] +
+    sdr_p5_addr_r <= SDR_MCU_BASE[26:3] +
                      (sweep_active ? {9'b0, sweep_line}
                                    : {9'b0, v25_rom_addr});
 end
@@ -1361,8 +1364,11 @@ reg        prot_rom_grant;
 wire [23:1] prot_p0_addr = {3'b000, prot_rom_addr[20:3], 2'b00};
 assign prot_rom_ack = prot_rom_grant && sdr_p0_ack;
 assign sdr_p0_req  = prot_rom_grant ? prot_rom_req : rom_req_r;
-assign sdr_p0_addr = prot_rom_grant ? {2'b00, prot_p0_addr[21:1]} :
-                                       {2'b00, rom_addr_r[21:1]};
+// The V60 emits a 22-bit byte address into the maincpu region; the base
+// supplies the rest.  Written as a concatenation on an aligned base rather than
+// relying on the region sitting at address 0.
+assign sdr_p0_addr = prot_rom_grant ? {SDR_MAINCPU_BASE[26:22], prot_p0_addr[21:1]} :
+                                      {SDR_MAINCPU_BASE[26:22], rom_addr_r[21:1]};
 
 `ifdef S32_MLAB_ROM_CACHE
 // Dedicated-profile area cache. The generic asynchronous cache below provides a

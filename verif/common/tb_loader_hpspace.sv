@@ -41,7 +41,7 @@ reg  [15:0] ioctl_dout = '0;
 wire        ioctl_wait;
 board_desc_t board_desc;
 wire        sw_req;
-wire [24:1] sw_addr;
+wire [26:1] sw_addr;
 wire [15:0] sw_din;
 wire  [1:0] sw_be;
 wire        sw_ack;
@@ -85,11 +85,11 @@ reg         mem_oe = 1'b0;
 assign SDRAM_DQ = mem_oe ? mem_dq : 16'hzzzz;
 
 reg p0_req=0,p1_req=0,p2_req=0,p3_req=0,p4_req=0;
-reg [24:1] p0_addr=0,p3_addr=0,p4_addr=0; reg [24:3] p1_addr=0; reg [24:4] p2_addr=0;
+reg [26:1] p0_addr=0,p3_addr=0,p4_addr=0; reg [26:3] p1_addr=0; reg [26:4] p2_addr=0;
 wire [15:0] p0_dout,p3_dout,p4_dout; wire [63:0] p1_dout; wire [127:0] p2_dout;
 wire p0_ack,p1_ack,p2_ack,p3_ack,p4_ack;
 reg         p5_req = 1'b0;
-reg  [24:3] p5_addr = '0;
+reg  [26:3] p5_addr = '0;
 wire [63:0] p5_dout;
 wire        p5_ack;
 
@@ -139,7 +139,7 @@ end
 // Reference data
 // ------------------------------------------------------------------
 localparam [26:0] OFF_MCU_TB = 27'h0E0_0040;   // == loader OFF_MCU
-localparam [24:1] MCU_WBASE  = 24'h700000;     // SDR_MCU_BASE >> 1
+localparam [26:1] MCU_WBASE  = SDR_MCU_BASE[26:1]; // derived, not hard-coded
 
 // Same permutation as the loader (kept literal so a loader typo cannot
 // self-verify).
@@ -186,7 +186,7 @@ task automatic p5_check(input [16:0] off);
     begin
         for (b = 0; b < 8; b = b + 1)
             expw[b*8 +: 8] = exp_img[{off[16:3], 3'b000} + b[16:0]];
-        @(negedge clk_ram); p5_addr = MCU_WBASE[24:3] + off[16:3]; p5_req = 1'b1;
+        @(negedge clk_ram); p5_addr = MCU_WBASE[26:3] + off[16:3]; p5_req = 1'b1;
         @(negedge clk_ram); p5_req = 1'b0;
         t = 0; while (!p5_ack && t < 400) begin @(posedge clk_ram); #1; t = t + 1; end
         if (!p5_ack) begin

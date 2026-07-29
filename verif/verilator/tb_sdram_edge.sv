@@ -56,8 +56,8 @@ module tb_sdram_edge;
     wire        SDRAM_DQML, SDRAM_DQMH, SDRAM_nCS, SDRAM_nCAS, SDRAM_nRAS, SDRAM_nWE, SDRAM_CKE;
 
     // p0 (V60), p5 (V25) driven; other ports idle.
-    reg         p0_req = 0;  reg [24:1] p0_addr = 0;  wire [15:0] p0_dout;  wire p0_ack;
-    reg         p5_req = 0;  reg [24:3] p5_addr = 0;  wire [63:0] p5_dout;  wire p5_ack;
+    reg         p0_req = 0;  reg [26:1] p0_addr = 0;  wire [15:0] p0_dout;  wire p0_ack;
+    reg         p5_req = 0;  reg [26:3] p5_addr = 0;  wire [63:0] p5_dout;  wire p5_ack;
 
     sdram dut (
         .clk(clk_ram), .init(init), .ready(ready),

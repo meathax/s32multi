@@ -67,16 +67,16 @@ reg         mem_oe = 1'b0;
 assign SDRAM_DQ = mem_oe ? mem_dq : 16'hzzzz;
 
 reg         wr_req = 1'b0;
-reg  [24:1] wr_addr = '0;
+reg  [26:1] wr_addr = '0;
 reg  [15:0] wr_din = '0;
 reg  [1:0]  wr_be = 2'b11;
 wire        wr_ack;
 wire        sdram_ready;
 
 wire        p0_req, p1_req, p2_req, p3_req, p4_req, p5_req;
-wire [24:1] p0_addr, p3_addr, p4_addr;
-wire [24:3] p1_addr, p5_addr;
-wire [24:4] p2_addr;
+wire [26:1] p0_addr, p3_addr, p4_addr;
+wire [26:3] p1_addr, p5_addr;
+wire [26:4] p2_addr;
 wire [15:0] p0_dout, p3_dout, p4_dout;
 wire [63:0] p1_dout, p5_dout;
 wire [127:0] p2_dout;
@@ -255,7 +255,7 @@ end
 // -------------------------------------------------------------------------
 // Preload through the controller's own write port (the loader's port)
 // -------------------------------------------------------------------------
-task automatic sdram_wr(input [24:1] a, input [15:0] d, input [1:0] be);
+task automatic sdram_wr(input [26:1] a, input [15:0] d, input [1:0] be);
     begin
         @(negedge clk_ram);
         wr_addr = a; wr_din = d; wr_be = be; wr_req = 1'b1;
@@ -265,7 +265,7 @@ task automatic sdram_wr(input [24:1] a, input [15:0] d, input [1:0] be);
     end
 endtask
 
-localparam [24:1] MCU_WBASE = SDR_MCU_BASE[24:1];   // word address of 0x0E00000
+localparam [26:1] MCU_WBASE = SDR_MCU_BASE[26:1];   // word address of 0x0E00000
 
 integer w, t;
 integer cyc = 0;
@@ -295,7 +295,7 @@ initial begin
     sdram_wr(24'h7FFFA, 16'h0000, 2'b11);
     // MCU image: descrambled bytes at SDR_MCU_BASE, per-lane like the loader
     for (w = 0; w < 65536; w = w + 2)
-        sdram_wr(MCU_WBASE + w[24:1], {ext[w+1], ext[w]}, 2'b11);
+        sdram_wr(MCU_WBASE + w[26:1], {ext[w+1], ext[w]}, 2'b11);
 
     $display("V25_SDRAM preload done");
     repeat (8) @(negedge clk_sys);

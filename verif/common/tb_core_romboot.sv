@@ -164,7 +164,7 @@ end
 
 // p0: V60 program (clk_sys single-cycle toggle ack)
 wire        p0_req;
-wire [24:1] p0_addr;
+wire [26:1] p0_addr;
 reg  [15:0] p0_dout;
 reg         p0_ack = 0;
 always @(posedge clk_sys) begin
@@ -174,13 +174,13 @@ end
 
 // p5: production real-V25 program path. The loader stores the descrambled
 // 64 KiB MCU image at SDR_MCU_BASE and the core fetches aligned 8-byte lines.
-localparam [21:0] MCU_BASE_W = SDR_MCU_BASE[24:3];
+localparam [23:0] MCU_BASE_W = SDR_MCU_BASE[26:3];
 wire        p5_req;
-wire [24:3] p5_addr;
+wire [26:3] p5_addr;
 reg  [63:0] p5_dout = 64'h0;
 reg         p5_ack = 0;
 reg         p5_pend = 0;
-reg  [24:3] p5_addr_l = 0;
+reg  [26:3] p5_addr_l = 0;
 wire [12:0] p5_off = p5_addr_l[15:3] - MCU_BASE_W[12:0];
 always @(posedge clk_sys) begin
     p5_ack <= 1'b0;
@@ -206,7 +206,7 @@ end
 
 // p1: tile data, 64-bit (clk_ram)
 wire        p1_req;
-wire [24:3] p1_addr;
+wire [26:3] p1_addr;
 reg  [63:0] p1_dout;
 reg         p1_ack = 0;
 always @(posedge clk_ram) begin
@@ -216,7 +216,7 @@ end
 
 // p2: sprite data, 128-bit (clk_ram)
 wire        p2_req;
-wire [24:4] p2_addr;
+wire [26:4] p2_addr;
 reg [127:0] p2_dout;
 reg         p2_ack = 0;
 always @(posedge clk_ram) begin
@@ -226,7 +226,7 @@ end
 
 // p3: Z80 program/banks (clk_sys)
 wire        p3_req;
-wire [24:1] p3_addr;
+wire [26:1] p3_addr;
 reg  [15:0] p3_dout;
 reg         p3_ack = 0;
 always @(posedge clk_sys) begin

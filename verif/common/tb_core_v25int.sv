@@ -49,7 +49,7 @@ end
 // -------------------------------------------------------------------------
 reg [15:0] rom [0:8191];
 wire        p0_req;
-wire [24:1] p0_addr;
+wire [26:1] p0_addr;
 reg  [15:0] p0_dout;
 reg         p0_ack = 0;
 always @(posedge clk_sys) begin
@@ -62,15 +62,15 @@ end
 // MAME's destination<-source address descramble (identical to the production
 // loader + tb_v25_firmware), then serve 64-bit words at SDR_MCU_BASE.
 // -------------------------------------------------------------------------
-localparam [21:0] MCU_BASE_W = SDR_MCU_BASE[24:3];   // 0x0E00000 >> 3
+localparam [23:0] MCU_BASE_W = SDR_MCU_BASE[26:3];   // 0x0E00000 >> 3
 reg [7:0] raw    [0:65535];
 reg [7:0] ext    [0:65535];
 wire        p5_req;
-wire [24:3] p5_addr;
+wire [26:3] p5_addr;
 reg  [63:0] p5_dout = 64'h0;
 reg         p5_ack  = 0;
 reg         p5_pend  = 0;
-reg  [24:3] p5_addr_l = 0;
+reg  [26:3] p5_addr_l = 0;
 integer     p5_reads = 0;
 
 function automatic [15:0] descramble(input [15:0] i);

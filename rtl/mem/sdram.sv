@@ -32,78 +32,90 @@ module sdram (
     output reg  [1:0] SDRAM_BA,
     output            SDRAM_DQML,
     output            SDRAM_DQMH,
-    output reg        SDRAM_nCS,
-    output reg        SDRAM_nCAS,
-    output reg        SDRAM_nRAS,
-    output reg        SDRAM_nWE,
+    output            SDRAM_nCS,
+    output            SDRAM_nCAS,
+    output            SDRAM_nRAS,
+    output            SDRAM_nWE,
     output            SDRAM_CKE,
 
     // download/write port (word writes, ROM load)
     input             wr_req,
-    input      [24:1] wr_addr,
+    input      [26:1] wr_addr,
     input      [15:0] wr_din,
     input       [1:0] wr_be,
     output reg        wr_ack,
 
     // p0: V60
     input             p0_req,
-    input      [24:1] p0_addr,
+    input      [26:1] p0_addr,
     output reg [15:0] p0_dout,
     output reg        p0_ack,
 
     // p1: tiles — 4-word burst, aligned to 8 bytes
     input             p1_req,
-    input      [24:3] p1_addr,
+    input      [26:3] p1_addr,
     output reg [63:0] p1_dout,
     output reg        p1_ack,
 
     // p2: sprites — 8-word burst, aligned to 16 bytes
     input             p2_req,
-    input      [24:4] p2_addr,
+    input      [26:4] p2_addr,
     output reg [127:0] p2_dout,
     output reg        p2_ack,
 
     // p3: Z80
     input             p3_req,
-    input      [24:1] p3_addr,
+    input      [26:1] p3_addr,
     output reg [15:0] p3_dout,
     output reg        p3_ack,
 
     // p4: MultiPCM
     input             p4_req,
-    input      [24:1] p4_addr,
+    input      [26:1] p4_addr,
     output reg [15:0] p4_dout,
     output reg        p4_ack,
 
     // p5: V25 program ROM - 4-word burst, aligned to 8 bytes
     input             p5_req,
-    input      [24:3] p5_addr,
+    input      [26:3] p5_addr,
     output reg [63:0] p5_dout,
     output reg        p5_ack
 );
 
 reg [15:0] dq_out;
 reg        dq_oe;
-reg  [1:0] dqm;
 
 assign SDRAM_CKE  = 1'b1;
-assign SDRAM_DQML = dqm[0];
-assign SDRAM_DQMH = dqm[1];
+
+// MiSTer 128 MB module: the two devices' DQML/DQMH pins are SHORTED to A11/A12
+// (verified against Arcade-IremM92_MiSTer rtl/sdram.sv:69 and jtframe's
+// jtframe_sdram_bank_core.v:140 "This is a limitation in MiSTer's 128MB
+// module").  DQM is therefore not an independent output: it is whatever the
+// address bus carries.  A[12:11] must be 00 for any cycle whose data must not
+// be masked, and carries ~be during a WRITE CAS.  Driving these pins separately
+// would fight the shorted net.
+assign {SDRAM_DQMH, SDRAM_DQML} = SDRAM_A[12:11];
 
 localparam BURST_1   = 3'b000;
 localparam CL        = 3'd2;
 
-// commands {nCS,nRAS,nCAS,nWE}
-localparam CMD_NOP   = 4'b0111;
-localparam CMD_ACT   = 4'b0011;
-localparam CMD_READ  = 4'b0101;
-localparam CMD_WRITE = 4'b0100;
-localparam CMD_PRE   = 4'b0010;
-localparam CMD_REF   = 4'b0001;
-localparam CMD_MRS   = 4'b0000;
+// commands {nRAS,nCAS,nWE}.  nCS is NOT part of the command encoding any more:
+// on the 128 MB module it is the device selector, driven from address bit 26.
+// CMD_NOP must therefore stay RAS/CAS/WE=111 (a real NOP with the device
+// selected) and must never be expressed as a deselect, or the chip bit would
+// be destroyed by every idle cycle.
+localparam CMD_NOP   = 3'b111;
+localparam CMD_ACT   = 3'b011;
+localparam CMD_READ  = 3'b101;
+localparam CMD_WRITE = 3'b100;
+localparam CMD_PRE   = 3'b010;
+localparam CMD_REF   = 3'b001;
+localparam CMD_MRS   = 3'b000;
 
-reg  [3:0] cmd = CMD_NOP;
-assign {SDRAM_nCS, SDRAM_nRAS, SDRAM_nCAS, SDRAM_nWE} = cmd;
+reg  [2:0] cmd = CMD_NOP;
+reg        chip_sel = 1'b0;      // SDRAM_nCS: 0 = device 0, 1 = device 1
+assign {SDRAM_nRAS, SDRAM_nCAS, SDRAM_nWE} = cmd;
+assign SDRAM_nCS = chip_sel;
 
 assign SDRAM_DQ = dq_oe ? dq_out : 16'hZZZZ;
 
@@ -116,7 +128,7 @@ reg        ref_pend;
 
 typedef enum logic [3:0] {
     ST_IDLE, ST_DISPATCH, ST_ACT, ST_RCD1, ST_RCD2, ST_RD, ST_RDW,
-    ST_WR, ST_WRRC, ST_PRE_XFER, ST_PRE_REF, ST_REF, ST_REFW
+    ST_WR, ST_WRRC, ST_PRE_XFER, ST_PRE_REF_B, ST_PRE_REF, ST_REF_B, ST_REFW
 } state_t;
 state_t state = ST_IDLE;
 
@@ -125,7 +137,7 @@ reg [2:0]  rr_next;
 reg [3:0]  rd_total;        // words to read (1/4/8)
 reg [3:0]  rd_issued;
 reg [3:0]  rd_captured;
-reg [24:1] xfer_addr;
+reg [26:1] xfer_addr;
 reg        is_write;
 reg [15:0] din_r;
 reg [1:0]  be_r;
@@ -133,6 +145,7 @@ reg [2:0]  wrrc_cnt;
 reg [2:0]  refw_cnt;
 reg [1:0]  pre_cnt;
 reg        row_open;
+reg        open_chip;          // which device the open row belongs to
 reg  [1:0] open_bank;
 reg [12:0] open_row;
 reg [1:0]  ack_stretch;     // acks held 2 clk_ram cycles (clk_sys is /2 sync)
@@ -144,10 +157,10 @@ reg [15:0] din_pipe_d1, din_pipe_d2;   // unused placeholder (kept for clarity)
 // req or moves on to its next address.  This mirrors the latched per-slot
 // request interfaces used by mature MiSTer SDRAM frameworks.
 reg p0_pend, p1_pend, p2_pend, p3_pend, p4_pend, p5_pend, wr_pend;
-reg [24:1] p0_addr_p, p3_addr_p, p4_addr_p, wr_addr_p;
-reg [24:3] p1_addr_p;
-reg [24:3] p5_addr_p;
-reg [24:4] p2_addr_p;
+reg [26:1] p0_addr_p, p3_addr_p, p4_addr_p, wr_addr_p;
+reg [26:3] p1_addr_p;
+reg [26:3] p5_addr_p;
+reg [26:4] p2_addr_p;
 reg [15:0] wr_din_p;
 reg  [1:0] wr_be_p;
 
@@ -261,6 +274,23 @@ generate
         end
     end
 endgenerate
+
+// DQM is the shorted A[12:11] net, and DQM has 2-cycle READ latency.  The FSM
+// is strictly serialised today, so A holds its CAS value for the whole return
+// window by construction -- but nothing enforces that, and any future attempt
+// to pipeline commands across a read would silently mask returning data.  That
+// failure looks like sporadic ROM corruption, not like a protocol error, so
+// make it loud here.
+reg a_mask_flagged = 1'b0;
+always @(posedge clk) begin
+    if (init) a_mask_flagged <= 1'b0;
+    else if (ready && cl_pipe != 0 && SDRAM_A[12:11] != 2'b00 && !a_mask_flagged) begin
+        a_mask_flagged <= 1'b1;
+        $display("SDRAM ERROR: A[12:11]=%b during read return (cl_pipe=%b) -- DQM is shorted to these pins and would mask read data",
+                 SDRAM_A[12:11], cl_pipe);
+        $stop;
+    end
+end
 `endif
 
 // Centre the SDRAM board interface with SDRAM_CLK forwarded at 180 degrees.
@@ -309,33 +339,49 @@ always @(posedge clk) begin
         ref_pend <= 1'b0;
         ref_cnt  <= 10'd0;
         row_open <= 1'b0;
+        open_chip <= 1'b0;
         open_bank <= 2'b00;
         open_row <= 13'd0;
         pre_cnt <= 2'd0;
-        dqm      <= 2'b11;
+        chip_sel <= 1'b0;
         cl_pipe  <= 4'b0000;
         ack_stretch <= 0;
         rr_next <= 3'd0;
     end
     else if (!ready) begin
         init_cnt <= init_cnt - 1'd1;
-        dqm      <= 2'b11;
-        // init: wait >100us, PRE-all, 8x REF, MRS (JEDEC)
+        // init: wait >100us, then PRE-all / 8x REF / MRS for EACH device.  A
+        // device that never receives MRS returns garbage the moment it is first
+        // addressed, and one that is never refreshed loses whatever it holds --
+        // so both halves are brought up even though device 1 stays unused until
+        // the sprite region moves there.
         case (init_cnt)
-            16'h0400: begin cmd <= CMD_PRE; SDRAM_A[10] <= 1'b1; end
-            16'h03c0, 16'h0380, 16'h0340, 16'h0300,
-            16'h02c0, 16'h0280, 16'h0240, 16'h0200: cmd <= CMD_REF;
-            16'h00a0: begin
+            // ---- device 0 ----
+            16'h0800: begin chip_sel <= 1'b0; cmd <= CMD_PRE; SDRAM_A <= 13'h0400; end
+            16'h07c0, 16'h0780, 16'h0740, 16'h0700,
+            16'h06c0, 16'h0680, 16'h0640, 16'h0600: begin chip_sel <= 1'b0; cmd <= CMD_REF; end
+            16'h0500: begin
+                chip_sel <= 1'b0;
                 cmd      <= CMD_MRS;
                 SDRAM_BA <= 2'b00;
                 SDRAM_A  <= 13'b000_0_00_010_0_000; // CL2, sequential, burst 1
             end
+            // ---- device 1 ----
+            16'h0400: begin chip_sel <= 1'b1; cmd <= CMD_PRE; SDRAM_A <= 13'h0400; end
+            16'h03c0, 16'h0380, 16'h0340, 16'h0300,
+            16'h02c0, 16'h0280, 16'h0240, 16'h0200: begin chip_sel <= 1'b1; cmd <= CMD_REF; end
+            16'h00a0: begin
+                chip_sel <= 1'b1;
+                cmd      <= CMD_MRS;
+                SDRAM_BA <= 2'b00;
+                SDRAM_A  <= 13'b000_0_00_010_0_000; // CL2, sequential, burst 1
+            end
+            16'h0010: begin chip_sel <= 1'b0; SDRAM_A <= 13'h0000; end
             16'h0001: ready <= 1'b1;
             default: ;
         endcase
     end
     else begin
-        dqm <= 2'b00;
         // refresh scheduling: 8192 rows / 64ms @ 96.65MHz -> every 755 cyc
         ref_cnt <= ref_cnt + 1'd1;
         if (ref_cnt == 10'd700) begin ref_cnt <= 0; ref_pend <= 1'b1; end
@@ -354,13 +400,16 @@ always @(posedge clk) begin
         case (state)
         ST_IDLE: begin
             if (ref_pend && cl_pipe == 0) begin
-                cmd <= CMD_PRE; SDRAM_A[10] <= 1'b1;
+                // Both devices need refreshing, and a deselected device sees
+                // nothing, so the sequence is PRE-all dev0, PRE-all dev1, tRP,
+                // REF dev0, REF dev1.  ~3 extra cycles in 700 (<0.5%).
+                chip_sel <= 1'b0;
+                cmd <= CMD_PRE; SDRAM_A <= 13'h0400;   // A10=1: all banks
                 row_open <= 1'b0;
-                refw_cnt <= 3'd1;             // tRP >= 2 cycles before REF
-                state <= ST_PRE_REF;
+                state <= ST_PRE_REF_B;
             end
             else if (wr_pend | read_valid) begin
-                logic [24:1] a;
+                logic [26:1] a;
                 if      (wr_pend) begin grant <= 3'd7; a = wr_addr_p;           rd_total <= 4'd1; is_write <= 1'b1; end
                 else begin
                     grant <= read_grant;
@@ -393,7 +442,11 @@ always @(posedge clk) begin
             // A same-row download write can reuse the active row. Every other
             // transfer first closes the row explicitly so reads retain their
             // original ACT/auto-precharge behavior.
+            // The row-reuse compare must include the DEVICE and must exclude
+            // a[25], which is a COLUMN bit (col[9]), not a row bit.  Getting
+            // either wrong writes download data into the wrong row silently.
             if (row_open && is_write &&
+                xfer_addr[26]    == open_chip &&
                 xfer_addr[24:23] == open_bank &&
                 xfer_addr[22:10] == open_row) begin
                 state <= ST_WR;
@@ -416,8 +469,10 @@ always @(posedge clk) begin
 
         ST_ACT: begin
             cmd      <= CMD_ACT;
+            chip_sel <= xfer_addr[26];          // device select
             SDRAM_BA <= xfer_addr[24:23];
-            SDRAM_A  <= xfer_addr[22:10];
+            SDRAM_A  <= xfer_addr[22:10];       // 13 row bits
+            open_chip <= xfer_addr[26];
             open_bank <= xfer_addr[24:23];
             open_row  <= xfer_addr[22:10];
             row_open  <= 1'b1;
@@ -431,10 +486,13 @@ always @(posedge clk) begin
         ST_WR: begin
             cmd      <= CMD_WRITE;
             SDRAM_BA <= xfer_addr[24:23];
-            SDRAM_A  <= {2'b00, 1'b0, xfer_addr[10:1]};  // keep row open
+            // A[12:11] = ~be  -> the shorted DQMH/DQML byte mask.
+            // A[10]    = 0    -> no auto-precharge, keep row open.
+            // A[9]     = a[25]-> col[9], the top address bit (see header).
+            // A[8:0]   = a[9:1]
+            SDRAM_A  <= {~be_r, 1'b0, xfer_addr[25], xfer_addr[9:1]};
             dq_out   <= din_r;
             dq_oe    <= 1'b1;
-            dqm      <= ~be_r;
             // No auto-precharge is used for download writes. The conservative
             // two-cycle write-recovery gap is enough before another WRITE on
             // the same row and still leaves explicit precharge for row changes.
@@ -451,10 +509,16 @@ always @(posedge clk) begin
             // issue one READ per cycle until rd_total issued
             cmd      <= CMD_READ;
             SDRAM_BA <= xfer_addr[24:23];
+            // A[12:11] MUST be 00: they are the shorted DQM pins and DQM has
+            // 2-cycle read latency, so anything else here masks returning data.
+            // A[10] = auto-precharge on the final CAS.  A[9] = col[9] = a[25].
             SDRAM_A  <= {2'b00, (rd_issued + 1'd1 == rd_total) ? 1'b1 : 1'b0,
-                         xfer_addr[10:1]};
+                         xfer_addr[25], xfer_addr[9:1]};
             cl_pipe[0] <= 1'b1;
-            xfer_addr[10:1] <= xfer_addr[10:1] + 1'd1;
+            // Advance within the 9 low column bits only.  Bursts are 4 words
+            // aligned to 8 bytes and 8 words aligned to 16 bytes, so the carry
+            // never escapes a[4:1]; a[25] (col[9]) must not be disturbed.
+            xfer_addr[9:1] <= xfer_addr[9:1] + 1'd1;
             rd_issued <= rd_issued + 1'd1;
             if (rd_issued + 1'd1 == rd_total) begin
                 row_open <= 1'b0; // final CAS requests auto-precharge
@@ -467,17 +531,28 @@ always @(posedge clk) begin
             if (cl_pipe == 0) state <= ST_IDLE;
         end
 
+        ST_PRE_REF_B: begin
+            chip_sel <= 1'b1;
+            cmd      <= CMD_PRE; SDRAM_A <= 13'h0400;
+            refw_cnt <= 3'd1;   // tRP >= 2 cycles before REF
+            state    <= ST_PRE_REF;
+        end
         ST_PRE_REF: begin
             if (refw_cnt == 0) begin
+                chip_sel <= 1'b0;
                 cmd      <= CMD_REF;
                 row_open <= 1'b0;
                 ref_pend <= 1'b0;
-                refw_cnt <= 3'd6;   // tRC(ref) >= 63ns = 7 cycles
-                state    <= ST_REFW;
+                state    <= ST_REF_B;
             end
             else refw_cnt <= refw_cnt - 1'd1;
         end
-        ST_REF: state <= ST_REFW;   // (unused; kept for enum stability)
+        ST_REF_B: begin
+            chip_sel <= 1'b1;
+            cmd      <= CMD_REF;
+            refw_cnt <= 3'd6;   // tRC(ref) >= 63ns = 7 cycles; both devices
+            state    <= ST_REFW; // refresh concurrently, so one wait covers them
+        end
         ST_REFW: begin
             if (refw_cnt == 0) state <= ST_IDLE;
             else refw_cnt <= refw_cnt - 1'd1;

@@ -18,7 +18,7 @@ reg [15:0] ioctl_dout = 16'd0;
 wire ioctl_wait;
 wire board_desc_t board_desc;
 wire sdr_wr_req;
-wire [24:1] sdr_wr_addr;
+wire [26:1] sdr_wr_addr;
 wire [15:0] sdr_wr_din;
 wire [1:0] sdr_wr_be;
 reg sdr_wr_ack = 1'b0;

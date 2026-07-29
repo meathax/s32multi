@@ -379,7 +379,7 @@ s32_eeprom_nvram_if #(.WIDE(1)) eep_nvram_if (
 
 ////////////////////////////   ROM LOADING   //////////////////////////////////
 wire        sw_req, sw_ack;
-wire [24:1] sw_addr;
+wire [26:1] sw_addr;
 wire [15:0] sw_din;
 wire  [1:0] sw_be;
 wire        v25_wr;
@@ -406,11 +406,11 @@ s32_rom_loader #(.WIDE(1)) loader (
 /////////////////////////////////   SDRAM   ///////////////////////////////////
 wire        p0_req, p0_ack, p1_req, p1_ack, p2_req, p2_ack, p3_req, p3_ack, p4_req, p4_ack, p5_req, p5_ack;
 wire        core_p1_req, core_p2_req;
-wire [24:1] p0_addr, p3_addr, p4_addr;
-wire [24:3] p1_addr, p5_addr;
-wire [24:4] p2_addr;
-wire [24:3] core_p1_addr;
-wire [24:4] core_p2_addr;
+wire [26:1] p0_addr, p3_addr, p4_addr;
+wire [26:3] p1_addr, p5_addr;
+wire [26:4] p2_addr;
+wire [26:3] core_p1_addr;
+wire [26:4] core_p2_addr;
 wire [15:0] p0_dout, p3_dout, p4_dout;
 wire [63:0] p1_dout, p5_dout;
 wire[127:0] p2_dout;
@@ -429,14 +429,14 @@ assign p2_addr = core_p2_addr;
 // tile/sprite unpackers without changing the normal game path.
 wire debug_tile_probe   = 1'b0;
 wire debug_sprite_probe = 1'b0;
-localparam [24:3] DEBUG_TILE_ADDR = SDR_TILES_BASE[24:3] + 22'd92;
-localparam [24:4] DEBUG_SPR_ADDR  = SDR_SPRITES_BASE[24:4];
+localparam [26:3] DEBUG_TILE_ADDR = SDR_TILES_BASE[26:3] + 24'd92;
+localparam [26:4] DEBUG_SPR_ADDR  = SDR_SPRITES_BASE[26:4];
 reg         debug_p1_req;
 reg         debug_p1_retry;
 reg         debug_p1_valid, debug_p2_valid;
 reg  [63:0] debug_p1_data;
 reg [127:0] debug_p2_data;
-reg  [24:4] debug_p2_addr;
+reg  [26:4] debug_p2_addr;
 
 // On mode-4 exit the tilemap (parked in T_PIXW holding tile_req) recovers
 // because this mux presents a fresh rising edge with the live core address

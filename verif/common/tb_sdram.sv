@@ -19,38 +19,38 @@ reg mem_oe = 1'b0;
 assign SDRAM_DQ = mem_oe ? mem_dq : 16'hzzzz;
 
 reg wr_req = 1'b0;
-reg [24:1] wr_addr = '0;
+reg [26:1] wr_addr = '0;
 reg [15:0] wr_din = '0;
 reg [1:0] wr_be = 2'b11;
 wire wr_ack;
 
 reg p0_req = 1'b0;
-reg [24:1] p0_addr = '0;
+reg [26:1] p0_addr = '0;
 wire [15:0] p0_dout;
 wire p0_ack;
 
 reg p1_req = 1'b0;
-reg [24:3] p1_addr = '0;
+reg [26:3] p1_addr = '0;
 wire [63:0] p1_dout;
 wire p1_ack;
 
 reg p2_req = 1'b0;
-reg [24:4] p2_addr = '0;
+reg [26:4] p2_addr = '0;
 wire [127:0] p2_dout;
 wire p2_ack;
 
 reg p3_req = 1'b0;
-reg [24:1] p3_addr = '0;
+reg [26:1] p3_addr = '0;
 wire [15:0] p3_dout;
 wire p3_ack;
 
 reg p4_req = 1'b0;
-reg [24:1] p4_addr = '0;
+reg [26:1] p4_addr = '0;
 wire [15:0] p4_dout;
 wire p4_ack;
 
 reg p5_req = 1'b0;
-reg [24:3] p5_addr = '0;
+reg [26:3] p5_addr = '0;
 wire [63:0] p5_dout;
 wire p5_ack;
 
@@ -91,7 +91,7 @@ always @(negedge clk) begin
     if (read_valid_pipe[1]) mem_dq = word_for_col(read_col_pipe[1]);
 end
 
-task automatic wait_ack_p0(input [24:1] addr);
+task automatic wait_ack_p0(input [26:1] addr);
     integer timeout;
     reg [15:0] expected;
     begin
@@ -109,7 +109,7 @@ task automatic wait_ack_p0(input [24:1] addr);
     end
 endtask
 
-task automatic wait_ack_p1(input [24:3] addr);
+task automatic wait_ack_p1(input [26:3] addr);
     integer timeout;
     reg [9:0] col;
     reg [63:0] expected;
@@ -130,7 +130,7 @@ task automatic wait_ack_p1(input [24:3] addr);
     end
 endtask
 
-task automatic wait_ack_p2(input [24:4] addr);
+task automatic wait_ack_p2(input [26:4] addr);
     integer timeout;
     reg [9:0] col;
     reg [127:0] expected;

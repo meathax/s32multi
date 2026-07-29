@@ -9,13 +9,13 @@ package s32_pkg;
     // ------------------------------------------------------------------
     // SDRAM region bases (byte addresses) — DESIGN.md §4.2
     // ------------------------------------------------------------------
-    localparam [24:0] SDR_MAINCPU_BASE  = 25'h000_0000; // 2 MB
-    localparam [24:0] SDR_SOUNDCPU_BASE = 25'h020_0000; // 4 MB
-    localparam [24:0] SDR_TILES_BASE    = 25'h060_0000; // 4 MB
-    localparam [24:0] SDR_MULTIPCM_BASE = 25'h0A0_0000; // 4 MB
-    localparam [24:0] SDR_MCU_BASE      = 25'h0E0_0000; // V25 ROM (64 KiB)
-    localparam [24:0] SDR_SPARE_BASE    = SDR_MCU_BASE; // remainder of 2 MB slot
-    localparam [24:0] SDR_SPRITES_BASE  = 25'h100_0000; // 16 MB
+    localparam [26:0] SDR_MAINCPU_BASE    = 27'h000_0000; // 2 MB
+    localparam [26:0] SDR_SOUNDCPU_BASE   = 27'h020_0000; // 4 MB
+    localparam [26:0] SDR_TILES_BASE      = 27'h060_0000; // 4 MB
+    localparam [26:0] SDR_MULTIPCM_BASE   = 27'h0A0_0000; // 4 MB
+    localparam [26:0] SDR_MCU_BASE        = 27'h0E0_0000; // V25 ROM (64 KiB)
+    localparam [26:0] SDR_SPARE_BASE     = SDR_MCU_BASE; // remainder of 2 MB slot
+    localparam [26:0] SDR_SPRITES_BASE    = 27'h100_0000; // 16 MB
 
     // ------------------------------------------------------------------
     // Board descriptor (first 64 bytes of ioctl stream) — DESIGN.md §3.4

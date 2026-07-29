@@ -36,7 +36,7 @@ module s32_rom_loader #(parameter WIDE=0) (
 
     // SDRAM write port
     output reg        sdr_wr_req,
-    output reg [24:1] sdr_wr_addr,
+    output reg [26:1] sdr_wr_addr,
     output reg [15:0] sdr_wr_din,
     output reg  [1:0] sdr_wr_be,
     input             sdr_wr_ack,
@@ -91,14 +91,14 @@ function automatic [15:0] v25_stream_to_dst(input [15:0] i);
 endfunction
 
 // map stream offset -> sdram byte address
-function automatic [24:0] map_addr(input [26:0] a);
-    if      (a < OFF_SOUNDCPU) map_addr = SDR_MAINCPU_BASE  + (a[24:0] - OFF_MAINCPU[24:0]);
-    else if (a < OFF_TILES)    map_addr = SDR_SOUNDCPU_BASE + (a[24:0] - OFF_SOUNDCPU[24:0]);
-    else if (a < OFF_MULTIPCM) map_addr = SDR_TILES_BASE    + (a[24:0] - OFF_TILES[24:0]);
-    else if (a < OFF_MCU)      map_addr = SDR_MULTIPCM_BASE + (a[24:0] - OFF_MULTIPCM[24:0]);
+function automatic [26:0] map_addr(input [26:0] a);
+    if      (a < OFF_SOUNDCPU) map_addr = SDR_MAINCPU_BASE  + (a[26:0] - OFF_MAINCPU[26:0]);
+    else if (a < OFF_TILES)    map_addr = SDR_SOUNDCPU_BASE + (a[26:0] - OFF_SOUNDCPU[26:0]);
+    else if (a < OFF_MULTIPCM) map_addr = SDR_TILES_BASE    + (a[26:0] - OFF_TILES[26:0]);
+    else if (a < OFF_MCU)      map_addr = SDR_MULTIPCM_BASE + (a[26:0] - OFF_MULTIPCM[26:0]);
     else if (a < OFF_SPRITES)  map_addr = SDR_MCU_BASE +
-        {9'd0, v25_stream_to_dst(a[15:0] - OFF_MCU[15:0])};
-    else                       map_addr = SDR_SPRITES_BASE + (a[24:0] - OFF_SPRITES[24:0]);
+        {11'd0, v25_stream_to_dst(a[15:0] - OFF_MCU[15:0])};
+    else                       map_addr = SDR_SPRITES_BASE + (a[26:0] - OFF_SPRITES[26:0]);
 endfunction
 
 function automatic is_rom_index(input [7:0] index);
@@ -179,7 +179,7 @@ always @(posedge clk) begin
                         end
                     end
                     else if (a >= OFF_MCU && a < OFF_SPRITES) begin
-                        logic [24:0] ma;
+                        logic [26:0] ma;
                         // The real V25 consumes the external SDRAM image;
                         // this pulse invalidates its cache while reset is held.
                         v25_wr    <= 1'b1;
@@ -188,7 +188,7 @@ always @(posedge clk) begin
                         ma = map_addr(a);
                         sdr_wr_req  <= 1'b1;
                         busy        <= 1'b1;
-                        sdr_wr_addr <= ma[24:1];
+                        sdr_wr_addr <= ma[26:1];
                         sdr_wr_din  <= ioctl_dout;
                         sdr_wr_be   <= 2'b11;
                     end
@@ -196,9 +196,9 @@ always @(posedge clk) begin
                         sdr_wr_req <= 1'b1;
                         busy       <= 1'b1;
                         begin
-                            logic [24:0] ma;
+                            logic [26:0] ma;
                             ma = map_addr(a);
-                            sdr_wr_addr <= ma[24:1];
+                            sdr_wr_addr <= ma[26:1];
                         end
                         sdr_wr_din <= ioctl_dout;
                         sdr_wr_be  <= 2'b11;
@@ -229,7 +229,7 @@ always @(posedge clk) begin
                         end
                     end
                     else if (a >= OFF_MCU && a < OFF_SPRITES) begin
-                        logic [24:0] ma;
+                        logic [26:0] ma;
                         v25_wr    <= 1'b1;
                         v25_waddr <= v25_stream_to_dst(a[15:0] - OFF_MCU[15:0]);
                         v25_wdata <= ioctl_dout[7:0];
@@ -238,7 +238,7 @@ always @(posedge clk) begin
                             ma = map_addr(a);
                             sdr_wr_req  <= 1'b1;
                             busy        <= 1'b1;
-                            sdr_wr_addr <= ma[24:1];
+                            sdr_wr_addr <= ma[26:1];
                             sdr_wr_din  <= {ioctl_dout[7:0], byte_lo};
                             sdr_wr_be   <= 2'b11;
                         end
@@ -249,9 +249,9 @@ always @(posedge clk) begin
                             sdr_wr_req <= 1'b1;
                             busy       <= 1'b1;
                             begin
-                                logic [24:0] ma;
+                                logic [26:0] ma;
                                 ma = map_addr(a);
-                                sdr_wr_addr <= ma[24:1];
+                                sdr_wr_addr <= ma[26:1];
                             end
                             sdr_wr_din <= {ioctl_dout[7:0], byte_lo};
                             sdr_wr_be  <= 2'b11;

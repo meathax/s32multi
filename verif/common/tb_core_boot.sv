@@ -32,7 +32,7 @@ board_desc_t board = '0;
 // behavioral "SDRAM" program memory on p0
 reg [15:0] rom [0:8191];   // 16KB of program
 wire        p0_req;
-wire [24:1] p0_addr;
+wire [26:1] p0_addr;
 reg  [15:0] p0_dout;
 reg         p0_ack;
 always @(posedge clk_sys) begin

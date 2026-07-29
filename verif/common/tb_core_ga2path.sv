@@ -40,7 +40,7 @@ end
 // stretched ack as seen from clk_sys).
 reg [15:0] rom [0:8191];
 wire        p0_req;
-wire [24:1] p0_addr;
+wire [26:1] p0_addr;
 reg  [15:0] p0_dout;
 reg         p0_ack = 0;
 always @(posedge clk_sys) begin

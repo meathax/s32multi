@@ -16,7 +16,7 @@ reg [15:0] dq_model = 16'h0000;
 reg dq_oe = 1'b0;
 assign dq = dq_oe ? dq_model : 16'hzzzz;
 reg wr_req = 1'b0;
-reg [24:1] wr_addr = '0;
+reg [26:1] wr_addr = '0;
 reg [15:0] wr_din = '0;
 reg [1:0] wr_be = 2'b11;
 wire wr_ack;
@@ -25,9 +25,9 @@ wire [15:0] p0_dout, p3_dout, p4_dout;
 wire [63:0] p1_dout, p5_dout;
 wire [127:0] p2_dout;
 reg p0_req=0,p3_req=0,p4_req=0,p5_req=0,p1_req=0,p2_req=0;
-reg [24:1] p0_addr=0,p3_addr=0,p4_addr=0;
-reg [24:3] p1_addr=0,p5_addr=0;
-reg [24:4] p2_addr=0;
+reg [26:1] p0_addr=0,p3_addr=0,p4_addr=0;
+reg [26:3] p1_addr=0,p5_addr=0;
+reg [26:4] p2_addr=0;
 wire [3:0] cmd = {ncs,nras,ncas,nwe};
 localparam [3:0] C_ACT=4'b0011, C_PRE=4'b0010, C_WRITE=4'b0100;
 integer acts=0, pres=0, writes=0, errors=0;
@@ -63,7 +63,7 @@ sdram dut(
     .p4_req(p4_req), .p4_addr(p4_addr), .p4_dout(p4_dout), .p4_ack(p4_ack),
     .p5_req(p5_req), .p5_addr(p5_addr), .p5_dout(p5_dout), .p5_ack(p5_ack)
 );
-task automatic write_word(input [24:1] addr, input [15:0] data);
+task automatic write_word(input [26:1] addr, input [15:0] data);
     integer guard;
     begin
         @(negedge clk);
