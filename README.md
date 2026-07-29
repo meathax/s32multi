@@ -30,11 +30,21 @@ working on the target MiSTer setup; an X means it is not yet ready.
 | Rad Rally | ✗ |
 | Slip Stream | ✗ |
 | SegaSonic The Hedgehog | ✗ |
-| Hard Dunk | ✗ |
-| OutRunners | ✗ |
-| Stadium Cross | ✗ |
-| Title Fight | ✗ |
+| Hard Dunk | sim |
+| OutRunners | sim |
+| Stadium Cross | sim |
+| Title Fight | sim |
 | AS-1 Controller | ✗ |
+
+The four Multi 32 titles ship in a single RBF built from the `s32Multi32`
+Quartus revision. "sim" means the game boots and renders in the full-core
+Verilator harness with no CPU exceptions; it has **not** been run on hardware,
+and the cabinet input maps have not been checked against each game's own I/O
+test screen.
+
+This revision targets the MiSTer **128 MB** SDRAM module specifically. That
+module carries two devices on one pin set, and the core refuses to leave reset
+on a smaller one rather than aliasing the sprite region onto the first device.
 
 ## What the core implements
 
