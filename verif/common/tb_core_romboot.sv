@@ -1022,6 +1022,23 @@ always @(posedge clk_sys) begin
     end
 end
 
+// Palette/mixer CPU *read* counters, split by screen.  +PALCMP already proved
+// the two palettes hold different data, so a single-screen Multi 32 build has
+// to keep only the selected monitor's copy and alias the other window onto it.
+// That is safe for writes (the hidden copy is never displayed) but not for
+// reads: if the game read-modify-writes palette or mixer state, aliasing feeds
+// it the wrong screen's data and corrupts both.  Count every accepted CPU read
+// of the four windows so the aliasing can be justified or rejected on evidence.
+integer n_pal0_rd = 0, n_pal1_rd = 0, n_mix0_rd = 0, n_mix1_rd = 0;
+always @(posedge clk_sys) begin
+    if (core.m_req && core.m_ack && !core.m_we && !core.ack_d) begin
+        if (core.is_pal0) n_pal0_rd = n_pal0_rd + 1;
+        if (core.is_pal1) n_pal1_rd = n_pal1_rd + 1;
+        if (core.is_mix0) n_mix0_rd = n_mix0_rd + 1;
+        if (core.is_mix1) n_mix1_rd = n_mix1_rd + 1;
+    end
+end
+
 // Optional CPU-side sprite-RAM write trace.  +SPRLOG=<n> enables at most n
 // accepted writes; +SPRLOGAT=<frame> limits it to the state transition of
 // interest.  Logging after m_ack proves both V60 execution and core address
@@ -1287,6 +1304,8 @@ initial begin
             fbw_buf, fbr_buf_l, core.disp_buf, fbw_pix, fbr_pix);
         $display("   pal: alias_lo/hi=%0d/%0d bank_lo/hi=%0d/%0d",
             n_pal_alias_lo, n_pal_alias_hi, n_pal_bank_lo, n_pal_bank_hi);
+        $display("   palrd: pal0=%0d pal1=%0d mix0=%0d mix1=%0d",
+            n_pal0_rd, n_pal1_rd, n_mix0_rd, n_mix1_rd);
         $display("   vid: m416=%b rdreq/frame=%0d kick/frame=%0d wr_y_last=%0d rd_y=%0d spr_cmd=%0d srom=%0d spr_opq=%0d inrd=%0d/%0d p1a=%0d",
             core.mode_416, rdreq_cnt, kick_cnt, fbw_y, fbr_y_l,
             spr_cmd_cnt, srom_req_cnt, spr_opq_cnt, coin_rd_cnt, start_rd_cnt,
