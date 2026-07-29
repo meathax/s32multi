@@ -18,6 +18,9 @@ case "$GAME" in
   spidman) B0=20 ;;   # has_ppi only
   sonic)   B0=10; B2=1; SBM=1 ;; # has_track + Sonic protection + 4 MiB sprites
   orunners) B0=09; B1=10 ;; # Multi32 + ADC + OutRunners station wiring
+  harddunk) B0=21 ;;  # Multi32 + PPI (six-player)
+  scross)   B0=09 ;;  # Multi32 + ADC (no OutRunners station wiring)
+  titlef)   B0=01 ;;  # Multi32 only, pure digital
   *)       B0=20 ;;
 esac
 BUILD_ARGS="--binary --timing --top-module tb_core_romboot --Mdir $MDIR -o romboot -f scratch/romboot.f +define+SIMULATION +define+S32_REAL_FB_SIM"

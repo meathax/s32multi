@@ -30,11 +30,34 @@ class BoardDescriptorTests(unittest.TestCase):
         descriptor = bytearray(GAMES["orunners"])
         self.assertEqual(descriptor[0] & 0x09, 0x09)  # Multi32 + ADC
         self.assertEqual(descriptor[1] & 0x10, 0x10)  # OutRunners wiring
-        self.assertEqual(RBF_BY_PARENT["orunners"], "s32OutRunners")
-        qsf = (Path(__file__).parents[1] / "s32OutRunners.qsf").read_text(encoding="utf-8")
-        self.assertIn('VERILOG_MACRO "S32_OUTRUNNERS_ONLY=1"', qsf)
+        self.assertEqual(RBF_BY_PARENT["orunners"], "s32Multi32")
+
+    def test_all_four_multi32_titles_share_one_rbf(self) -> None:
+        # The whole point of the Multi 32 revision: one bitstream, four games.
+        # harddunk/scross/titlef previously pointed at the System 32 release,
+        # which contains no Multi 32 support at all.
+        for parent in ("harddunk", "orunners", "scross", "titlef"):
+            self.assertEqual(RBF_BY_PARENT[parent], "s32Multi32", parent)
+            self.assertEqual(GAMES[parent][0] & 0x01, 0x01, f"{parent} multi32 bit")
+            self.assertEqual(GAMES[parent][0] & 0x02, 0x00, f"{parent} must be unprotected")
+            # byte 3 (sprite bank valid/mask) is computed at generation time
+            # from the real ROM region size, not carried in GAMES.
+        # The per-game selectors the RTL keeps descriptor-driven must actually
+        # differ, or a single build could not tell the four apart.
+        self.assertEqual(GAMES["harddunk"][0] & 0x20, 0x20)   # has_ppi
+        self.assertEqual(GAMES["harddunk"][0] & 0x08, 0x00)   # no adc
+        self.assertEqual(GAMES["scross"][0]   & 0x08, 0x08)   # has_adc
+        self.assertEqual(GAMES["scross"][0]   & 0x20, 0x00)   # no ppi
+        self.assertEqual(GAMES["scross"][1]   & 0x10, 0x00)   # not orunners wiring
+        self.assertEqual(GAMES["titlef"][0]   & 0x28, 0x00)   # neither
+
+    def test_multi32_revision_qsf(self) -> None:
+        qsf = (Path(__file__).parents[1] / "s32Multi32.qsf").read_text(encoding="utf-8")
+        self.assertIn('VERILOG_MACRO "S32_MULTI32_ONLY=1"', qsf)
         self.assertIn('VERILOG_MACRO "S32_RELEASE_MINIMAL=1"', qsf)
         self.assertIn('VERILOG_MACRO "S32_JT12_MLAB_SHIFTS=1"', qsf)
+        # Both screens are retained on this revision by decision.
+        self.assertNotIn("S32_SINGLE_SCREEN_MIX", qsf)
 
 
 class ButtonMetadataTests(unittest.TestCase):

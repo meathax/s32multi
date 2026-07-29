@@ -106,11 +106,32 @@ BUTTONS = {
         "Shift Up,Shift Down,DJ Music,Music Back,Music Forward,Brake,Start,Coin,Test,Service",
         "A,B,X,Y,L,R,Start,Select,-,-",
     ),
+    # Hard Dunk is a six-player cabinet: four action buttons per station.
+    "harddunk": (
+        "Shoot,Pass,Dunk,Block,Start,Coin,Test,Service",
+        "A,B,X,Y,Start,Select,-,-",
+    ),
+    # Stadium Cross: wheelie is ACTIVE HIGH on the real board (MAME scross
+    # input ports), unlike its neighbours -- do not "fix" that inversion.
+    "scross": (
+        "Attack,Wheelie,Brake,Start,Coin,Test,Service",
+        "A,B,X,Start,Select,-,-",
+    ),
+    # Title Fight is two dual-stick cockpits and has no action buttons; the
+    # second stick is the punch direction.
+    "titlef": (
+        "Start,Coin,Test,Service",
+        "Start,Select,-,-",
+    ),
 }
 
 BUTTON_COUNTS = {"ga2": 3, "jpark": 1, "alien3": 2, "spidman": 2,
-                 "orunners": 6}
-RBF_BY_PARENT = {"ga2": "s32GoldenAxe", "orunners": "s32OutRunners"}
+                 "orunners": 6, "harddunk": 4, "scross": 3, "titlef": 0}
+# The four Multi 32 titles ship in one RBF.  harddunk/scross/titlef pointed at
+# the System 32 release, which contains no Multi 32 support at all.
+RBF_BY_PARENT = {"ga2": "s32GoldenAxe",
+                 "orunners": "s32Multi32", "harddunk": "s32Multi32",
+                 "scross":   "s32Multi32", "titlef":   "s32Multi32"}
 
 UNSUPPORTED = {"as1", "as1a", "as1b", "as1c"}
 

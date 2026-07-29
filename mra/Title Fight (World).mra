@@ -3,7 +3,8 @@
   <setname>titlef</setname>
   <year>1992</year>
   <manufacturer>Sega</manufacturer>
-  <rbf>SegaS32</rbf>
+  <rbf>s32Multi32</rbf>
+  <buttons names="Start,Coin,Test,Service" default="Start,Select,-,-" count="0"/>
   <rom index="4" zip="titlef.zip" md5="none">
     <interleave output="32">
       <part name="epr-15388.ic37" crc="db1eefbd" map="0021"/>

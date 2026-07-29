@@ -68,7 +68,13 @@ set s32_ga_fixed_ce  [string equal $s32_revision "s32GoldenAxe"]
 # than the core it is meant to measure -- which both wastes a fit (the release
 # build closes at only +0.210 ns WITH the exception) and would make the
 # diagnostic a different machine than the one being diagnosed.
-set s32_out_fixed_ce [string match "s32OutRunners*" $s32_revision]
+# s32Multi32 is the same machine again: identical fixed 20 MHz V70 NCO, so the
+# same real two-cycle requirement.  Matching only "s32OutRunners*" would time it
+# strictly, and since the OutRunners release closes at only +0.210 ns WITH the
+# exception, the omission would not read as a constraint bug -- it would read as
+# the design no longer fitting.
+set s32_out_fixed_ce [expr {[string match "s32OutRunners*" $s32_revision] || \
+                            [string match "s32Multi32*"    $s32_revision]}]
 set s32_cpu_fixed_ce [expr {$s32_ga_fixed_ce || $s32_out_fixed_ce}]
 
 if {$s32_cpu_fixed_ce} {

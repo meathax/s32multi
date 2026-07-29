@@ -3,6 +3,19 @@
 //  DESIGN.md §9 — framework integration.
 //============================================================================
 
+// S32_M32_PROFILE = "this build is a Multi 32 board" (the OutRunners revision
+// or the four-game Multi 32 revision).  s32_core derives the same macro; it is
+// repeated here rather than relied upon across files because Quartus gives no
+// guarantee about source order, and a macro that silently failed to reach this
+// file would hand a Multi 32 build the Turbo option and the wrong CPU cadence
+// while the SDC still granted it the fixed-CE exception.
+`ifdef S32_OUTRUNNERS_ONLY
+ `define S32_M32_PROFILE 1
+`endif
+`ifdef S32_MULTI32_ONLY
+ `define S32_M32_PROFILE 1
+`endif
+
 module emu
 (
     input         CLK_50M,
@@ -194,7 +207,10 @@ localparam CONF_STR = {
 `endif
     "O[7],Service Mode,Off,On;",
 `ifndef S32_GOLDENAXE_ONLY
-`ifndef S32_OUTRUNNERS_ONLY
+`ifndef S32_M32_PROFILE
+    // Turbo can assert CE on consecutive clk_sys edges, which is exactly what
+    // the fixed-CE SDC exception promises cannot happen.  Never offer it on a
+    // profile that claims that exception.
     "O[16:15],CPU Turbo,Normal,x2,x3,x4;",
 `endif
 `endif
@@ -210,9 +226,13 @@ localparam CONF_STR = {
     "O[11:8],Debug Video,Off,-,-,-,-,-,-,-,-,FB Underrun;",
 `endif
 `ifndef S32_GOLDENAXE_ONLY
+`ifndef S32_M32_PROFILE
     "O[14:13],Analog Aim Invert,Off,X,Y,XY;",
 `endif
-`ifdef S32_OUTRUNNERS_ONLY
+`endif
+`ifdef S32_M32_PROFILE
+    // Stadium Cross is analog too, so these belong to the whole Multi 32
+    // profile rather than the OutRunners revision alone.
     // MiSTer has no dedicated analog-trigger signal: Linux reports XInput
     // LT/RT as ABS_Z/ABS_RZ and the mapper lands them on the SECOND stick's
     // axes, so "right trigger" normally arrives as joystick_r_analog_0.  That
@@ -291,10 +311,12 @@ wire pause = status[12];
 // register updates are never on consecutive clk_sys edges, matching the
 // fixed-CE timing exception in Arcade-SegaSystem32.sdc.
 wire [15:0] cpu_ce_inc = 16'd21848;
-`elsif S32_OUTRUNNERS_ONLY
-// OutRunners uses the Multi 32 V70 at its authentic fixed 20 MHz cadence.
+`elsif S32_M32_PROFILE
+// Every Multi 32 board runs the V70 at its authentic fixed 20 MHz cadence.
 // 2*27127 remains below one NCO wrap, so CPU updates are never on consecutive
 // clk_sys edges and the dedicated two-cycle constraint is structurally true.
+// This arm MUST cover every revision the SDC grants that exception to, or the
+// constraint is a lie about the hardware rather than a description of it.
 wire [15:0] cpu_ce_inc = 16'd27127;
 `else
 // Universal profiles retain the optional V60/V70 multiplier. They receive no
@@ -611,11 +633,55 @@ wire [7:0] orunners_shift_p1 = ~{6'b0, joystick_0[5], joystick_0[4]};
 wire [7:0] orunners_extra_p1 = ~{5'b0, joystick_0[8], joystick_0[7], joystick_0[6]};
 wire [7:0] orunners_shift_p2 = ~{6'b0, joystick_1[5], joystick_1[4]};
 wire [7:0] orunners_extra_p2 = ~{5'b0, joystick_1[8], joystick_1[7], joystick_1[6]};
-wire [7:0] core_p1a = active_board.orunners ? orunners_shift_p1 :
+// --- Multi 32 per-game station wiring --------------------------------------
+// The four Multi 32 titles are told apart by the same descriptor bits the core
+// keeps runtime-selectable (see the S32_MULTI32_ONLY cfg_* arm in s32_core):
+//   harddunk  has_ppi                 orunners  has_adc &&  orunners
+//   scross    has_adc && !orunners    titlef    neither
+wire m32_harddunk = active_board.multi32 &&  active_board.has_ppi;
+wire m32_orunners = active_board.multi32 &&  active_board.has_adc &&  active_board.orunners;
+wire m32_scross   = active_board.multi32 &&  active_board.has_adc && !active_board.orunners;
+wire m32_titlef   = active_board.multi32 && !active_board.has_ppi && !active_board.has_adc;
+
+// Hard Dunk has FOUR action buttons per station; p_dig() hardwires bit 3 low
+// because the System 32 games it was written for only have three.
+function automatic [7:0] p_dig4(input [31:0] j);
+    p_dig4 = ~{j[1], j[0], j[3], j[2], j[7], j[6], j[5], j[4]};
+endfunction
+
+// Title Fight is two dual-stick cockpits: each station's "buttons" are the
+// direction of a second stick, carried on bits 7:4 of its own port.
+function automatic [7:0] p_stick(input [31:0] j);
+    p_stick = ~{j[1], j[0], j[3], j[2], 4'b0000};
+endfunction
+
+// Stadium Cross: attack / wheelie / brake.  WHEELIE IS ACTIVE HIGH on the real
+// board (MAME scross input ports) while its neighbours are active low -- do not
+// "tidy" that inversion away.  Station 2 lives on P1_B, not P2_B.
+function automatic [7:0] p_scross(input [31:0] j);
+    p_scross = {~j[1], ~j[0], ~j[3], ~j[2], 2'b11, j[5], ~j[4]};
+endfunction
+
+wire [7:0] core_p1a = m32_orunners ? orunners_shift_p1 :
+                      m32_harddunk ? p_dig4(joystick_0)  :
+                      m32_scross   ? p_scross(joystick_0):
+                      m32_titlef   ? p_dig(joystick_0)   :
                       (active_board.prot_sel == PROT_SONIC) ? sonic_p1a : p1a_dig;
-wire [7:0] core_p2a = active_board.orunners ? orunners_extra_p1 : p_dig(joystick_1);
-wire [7:0] core_p1b = active_board.orunners ? orunners_shift_p2 : p_dig(joystick_2);
-wire [7:0] core_p2b = active_board.orunners ? orunners_extra_p2 : p_dig(joystick_3);
+wire [7:0] core_p2a = m32_orunners ? orunners_extra_p1 :
+                      m32_harddunk ? p_dig4(joystick_1) :
+                      m32_scross   ? 8'hff             :  // scross P2_A unused
+                      m32_titlef   ? p_stick(joystick_0):  // P1 right stick
+                      p_dig(joystick_1);
+wire [7:0] core_p1b = m32_orunners ? orunners_shift_p2 :
+                      m32_harddunk ? p_dig4(joystick_3) :  // Hard Dunk P4
+                      m32_scross   ? p_scross(joystick_1): // station 2 on P1_B
+                      m32_titlef   ? p_dig(joystick_1)  :  // P2 left stick
+                      p_dig(joystick_2);
+wire [7:0] core_p2b = m32_orunners ? orunners_extra_p2 :
+                      m32_harddunk ? p_dig4(joystick_4) :  // Hard Dunk P5
+                      m32_scross   ? 8'hff              :
+                      m32_titlef   ? p_stick(joystick_1):  // P2 right stick
+                      p_dig(joystick_3);
 
 // --- Analog-stick gun aiming (alien3/jpark) --------------------------------
 // The gun channels are MAME IPT_AD_STICK_X/Y: absolute, offset-binary, resting
@@ -681,7 +747,7 @@ end
 // and Verilator both tolerate it.
 // O[18:17]: 0 = triggers on the right stick (LT/RT normally land on stick 2),
 //           1 = paddle, 2 = left-stick Y, 3 = digital only.
-`ifdef S32_OUTRUNNERS_ONLY
+`ifdef S32_M32_PROFILE
 wire [1:0] pedal_src = status[18:17];
 wire       steer_pad = status[19];
 `else
@@ -736,14 +802,27 @@ wire [7:0] drive_brake_p1 = (joystick_0[9] || joystick_0[2]) ? 8'hff : brake_an_
 wire [7:0] drive_brake_p2 = (joystick_1[9] || joystick_1[2]) ? 8'hff : brake_an_p2;
 
 wire [7:0] adc_ch [0:7];
-assign adc_ch[0] = active_board.orunners ? drive_steer_p1 : aim_sm[0]; // ANALOG1
-assign adc_ch[1] = active_board.orunners ? drive_accel_p1 : aim_sm[1]; // ANALOG2
-assign adc_ch[2] = active_board.orunners ? drive_brake_p1 : aim_sm[2]; // ANALOG3
-assign adc_ch[3] = active_board.orunners ? drive_steer_p2 : aim_sm[3]; // ANALOG4
+// Stadium Cross does NOT share OutRunners' channel map.  MAME's scross input
+// ports are ANALOG1 = P1 steer (IPT_PADDLE, PORT_REVERSE), ANALOG2 = P1 accel,
+// ANALOG3 = P2 steer (also reversed), ANALOG4 = P2 accel -- four unbanked
+// channels, no brake axis, and both steering axes mirrored.  It still takes the
+// banked RTL path because it is Multi 32; it simply never writes bank 1.
+wire [7:0] scross_steer_p1 = 8'hff - drive_steer_p1;   // PORT_REVERSE
+wire [7:0] scross_steer_p2 = 8'hff - drive_steer_p2;
+assign adc_ch[0] = m32_scross ? scross_steer_p1 :
+                   active_board.orunners ? drive_steer_p1 : aim_sm[0]; // ANALOG1
+assign adc_ch[1] = m32_scross ? drive_accel_p1 :
+                   active_board.orunners ? drive_accel_p1 : aim_sm[1]; // ANALOG2
+assign adc_ch[2] = m32_scross ? scross_steer_p2 :
+                   active_board.orunners ? drive_brake_p1 : aim_sm[2]; // ANALOG3
+assign adc_ch[3] = m32_scross ? drive_accel_p2 :
+                   active_board.orunners ? drive_steer_p2 : aim_sm[3]; // ANALOG4
 assign adc_ch[4] = 8'h00;                                              // ANALOG5
 assign adc_ch[5] = 8'h00;                                              // ANALOG6
-assign adc_ch[6] = active_board.orunners ? drive_accel_p2 : paddle_0;  // ANALOG7
-assign adc_ch[7] = active_board.orunners ? drive_brake_p2 : paddle_1;  // ANALOG8
+assign adc_ch[6] = m32_scross ? 8'h00 :
+                   active_board.orunners ? drive_accel_p2 : paddle_0;  // ANALOG7
+assign adc_ch[7] = m32_scross ? 8'h00 :
+                   active_board.orunners ? drive_brake_p2 : paddle_1;  // ANALOG8
 
 // trackballs from mouse
 reg        m_dv [0:2];
@@ -819,8 +898,14 @@ wire [7:0] svc34 = ~{2'b00, test_btn, svc_btn, 4'b0000};
 // coin and start impossible and hid the second pair of PCB push switches.
 wire test_btn_b = status[7] | joystick_1[12];
 wire svc_btn_b  = joystick_1[13];
-wire [7:0] svc12_b = ~{3'b000, joystick_1[10], 1'b0,
-                        joystick_1[11], test_btn_b, svc_btn_b};
+// Station 2's start/coin.  On Hard Dunk this port carries START4 and START5
+// (players 3 and 6 arrive on the 8255's port C instead), so the six-player
+// cabinet needs its own arm rather than repeating player 2's buttons.
+wire [7:0] svc12_b = m32_harddunk
+                   ? ~{2'b00, joystick_4[10], joystick_3[10], 1'b0,
+                       joystick_3[11], test_btn_b, svc_btn_b}
+                   : ~{3'b000, joystick_1[10], 1'b0,
+                       joystick_1[11], test_btn_b, svc_btn_b};
 wire [7:0] svc34_b = ~{2'b00, test_btn_b, svc_btn_b, 4'b0000};
 // GA2's 4-player i8255 port C is MAME EXTRA3 (ppi.in_pc_callback -> "EXTRA3").
 // Base sets: bit0=Start3, bit1=Start4, bits[7:2] unused. The US sets (ga2u,
@@ -902,7 +987,12 @@ s32_core core (
     .in_portc_b(8'hff), .in_svc12_b(svc12_b), .in_svc34_b(svc34_b),
     .adc_ch(adc_ch),
     .trk_dv(trk_dv_a), .trk_dx(trk_dx_a), .trk_dy(trk_dy_a), .trk_btn(trk_btn),
-    .ppi_pa(p_dig(joystick_2)), .ppi_pb(p_dig(joystick_3)), .ppi_pc(ga2_ppi_pc),
+    // Hard Dunk's 8255 carries players 3 and 6 (the other four sit on the two
+    // 315-5296 pairs), and its port C carries START3/START6 rather than GA2's
+    // START3/START4 layout.
+    .ppi_pa(m32_harddunk ? p_dig4(joystick_2) : p_dig(joystick_2)),
+    .ppi_pb(m32_harddunk ? p_dig4(joystick_5) : p_dig(joystick_3)),
+    .ppi_pc(m32_harddunk ? ~{6'b0, joystick_5[10], joystick_2[10]} : ga2_ppi_pc),
     // Same OSD selector that steers the DDR line-fetch port, synchronised into
     // clk_ram; the sprite engine latches it once per render pass.
     .screen_sel(m32_screen_sync),

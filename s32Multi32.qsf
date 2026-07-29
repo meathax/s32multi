@@ -1,0 +1,62 @@
+set_global_assignment -name TOP_LEVEL_ENTITY sys_top
+# Four-game Multi 32 revision: Hard Dunk, OutRunners, Stadium Cross, Title
+# Fight.  The shared QSF keeps the System32-only release default;
+# S32_MULTI32_ONLY takes precedence in RTL (see s32_core parameter arm order).
+source Arcade-SegaSystem32.qsf
+set_global_assignment -name VERILOG_MACRO "S32_MULTI32_ONLY=1"
+set_global_assignment -name VERILOG_MACRO "S32_RELEASE_MINIMAL=1"
+
+# Move JT12's short history shifts into MLABs. Multi 32 needs both palette
+# banks, so preserving thirteen M10Ks gives this dense revision useful RAM
+# headroom without changing the synthesised FM state machine.
+set_global_assignment -name VERILOG_MACRO "S32_JT12_MLAB_SHIFTS=1"
+
+# OutRunners never executes a V60/V70 floating-point opcode.  Verified over the
+# 420-frame real-ROM run (boot -> attract, plus coin and start): the FP-disabled
+# build is pixel-identical and takes no reserved-instruction exception.  This
+# removes the FP register file, accumulator and decode cone, as the Golden Axe
+# revision already does.
+set_global_assignment -name VERILOG_MACRO "S32_V60_NO_FP=1"
+
+# Multi 32 is M10K-bound, not ALM-bound: the first fit reported 32,449/41,910
+# ALMs (77%) but 531/553 RAM blocks (96%).  The twelve 512x14 tilemap line
+# buffers and the 2 KiB S32COMM share RAM each occupy whole 10,240-bit M10Ks
+# while storing 7,168 and 16,384 bits, so moving them into MLABs spends spare
+# ALMs to buy back scarce block RAM in the clk_ram domain that is hardest to
+# route.  Golden Axe and the universal profile keep the M10K form.
+set_global_assignment -name VERILOG_MACRO "S32_LINEBUF_MLAB=1"
+
+# JT12's two 256-entry lookup tables (exprom 256x10, logsin 256x12) are constant
+# ROMs that each occupy a whole M10K for under 3 Kbit.  As pure combinational
+# functions of eight address bits they belong in LUTs on this revision.
+set_global_assignment -name VERILOG_MACRO "S32_JT12_LOGIC_ROMS=1"
+
+# The shared QSF selects AGGRESSIVE AREA, tuned for the dense Golden Axe / V25
+# revision.  OutRunners is the opposite shape: the first fit left 23% of the
+# ALMs free but missed setup by 0.197 ns on clk_ram (3 of 100 paths).  Trading
+# the area we have for the timing we need costs no block RAM at all, and it is
+# what turned that miss into positive slack on every corner.
+set_global_assignment -name OPTIMIZATION_MODE "BALANCED"
+set_global_assignment -name OPTIMIZATION_TECHNIQUE BALANCED
+set_global_assignment -name PHYSICAL_SYNTHESIS_COMBO_LOGIC_FOR_AREA OFF
+
+# ---------------------------------------------------------------------------
+# S32_NO_MLAB_ROM_CACHE is deliberately NOT set.
+#
+# Restoring the generic asynchronous V60 ROM cache would give the V70 back the
+# instruction-fetch throughput the MLAB cache costs, which is a real candidate
+# for the reported gameplay flicker.  It cannot be afforded here: it moves
+# ~2,850 ALMs back into logic, and the resulting 93% ALM / 93% RAM-block design
+# crashed every fitter seed without a summary -- a Quartus 17.0.2 routing
+# congestion failure, not a timing one.  Giving the line buffers back to M10K to
+# pay for it was tried and also failed to complete.
+#
+# This macro set is the one that has actually qualified: seed 6, 36,730/41,910
+# ALMs (88%), 514/553 RAM blocks (93%), and positive slack on setup, hold,
+# recovery, removal and minimum pulse width across all corners.  Change one
+# thing at a time from here.
+# ---------------------------------------------------------------------------
+
+set_global_assignment -name LAST_QUARTUS_VERSION "17.0.2 Lite Edition"
+set_global_assignment -name SMART_RECOMPILE ON
+set_global_assignment -name SAVE_DISK_SPACE OFF

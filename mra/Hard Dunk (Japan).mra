@@ -4,7 +4,8 @@
   <parent>harddunk</parent>
   <year>1994</year>
   <manufacturer>Sega</manufacturer>
-  <rbf>SegaS32</rbf>
+  <rbf>s32Multi32</rbf>
+  <buttons names="Shoot,Pass,Dunk,Block,Start,Coin,Test,Service" default="A,B,X,Y,Start,Select,-,-" count="4"/>
   <rom index="4" zip="harddunk.zip|harddunkj.zip" md5="none">
     <interleave output="32">
       <part name="epr-16508.ic37" crc="b3713be5" map="0021"/>
