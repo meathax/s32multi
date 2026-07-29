@@ -197,6 +197,28 @@ localparam OUTRUNNERS_ONLY = 1'b0;
 localparam GAME_ONLY      = 1'b0;
 `endif
 
+// Multi 32 renders two monitors but MiSTer presents one at a time (OSD O[6],
+// forwarded here as screen_sel).  The board keeps a palette RAM and a mixer per
+// monitor, and +PALCMP proved their contents genuinely diverge in play, so the
+// two cannot be merged into one shared copy.  They can, however, be reduced to
+// one *retained* copy: store the selected monitor's palette and mixer state and
+// alias the hidden monitor's windows onto it.  That saves 32 M10Ks and a whole
+// mixer, which is the headroom this dense revision needs.
+//
+// The cost is that screen_sel becomes a reset-time choice: toggling it in play
+// leaves the retained copy holding a mix of both monitors' state until the game
+// rewrites it.  The OSD option is documented as requiring a core reset.
+//
+// Safe only because the CPU never reads either window back -- see the palrd
+// counters in tb_core_romboot and docs/debug/orunners-attract/journal.md.  A
+// title that read-modify-writes palette or mixer state would be corrupted by
+// the aliasing, so this stays opt-in per revision rather than on by default.
+`ifdef S32_SINGLE_SCREEN_MIX
+localparam SINGLE_SCREEN  = 1'b1;
+`else
+localparam SINGLE_SCREEN  = 1'b0;
+`endif
+
 // Dedicated Golden Axe hardware constants. The MRA descriptor is still loaded
 // and validated, but fixing these board straps at elaboration lets Quartus
 // remove unrelated runtime-select muxes. Other profiles remain descriptor-led.
@@ -787,9 +809,17 @@ s32_linebuf shared_lbuf (
     .px_nbg3(mix_px_nbg3), .px_bmp(mix_px_bmp)
 );
 
+// In a SINGLE_SCREEN build this instance holds whichever monitor screen_sel
+// selects, so the hidden monitor's palette writes are dropped rather than
+// stored.  Both windows still decode and read back (aliased below), matching
+// the board's address map for any code that probes them.
+wire sel_pal = SINGLE_SCREEN ? (screen_sel ? is_pal1 : is_pal0) : is_pal0;
+wire sel_mix = SINGLE_SCREEN ? (screen_sel ? is_mix1 : is_mix0) : is_mix0;
+wire disp_en = SINGLE_SCREEN ? (screen_sel ? io1_cnt1 : io0_cnt1) : io0_cnt1;
+
 s32_palette pal0 (
     .clk(clk_sys), .mix_clk(clk_ram),
-    .cpu_we(m_req && m_we && is_pal0),
+    .cpu_we(m_req && m_we && sel_pal),
     .cpu_addr(A[15:1]), .cpu_wdata(m_wdata), .cpu_be(m_be),
     .cpu_rdata(pal0_cpu_q), .mixer_r4e(mix0_r4e),
     .mix_addr(mix0_pal_addr), .mix_data(mix0_pal_q),
@@ -799,11 +829,11 @@ assign debug_pal_rd = dbg_pal0_entries;
 
 s32_mixer mix0 (
     .clk(clk_ram), .rst(rst),
-    .reg_we(wr_stb && m_we && is_mix0),
+    .reg_we(wr_stb && m_we && sel_mix),
     .reg_addr(A[6:1]), .reg_wdata(m_wdata), .reg_be(m_be),
     .reg_rdata(mix0_q), .reg_raddr(A[6:1]), .reg_r4e(mix0_r4e),
     .disp_x(mix_disp_x_cdc), .disp_y(vcnt), .disp_active(~hb & ~vb),
-    .display_en(io0_cnt1), .flip_y(cfg_flip_y), .layer_off(tm_layer_off), .bg_ctrl(mix_bg_ctrl),
+    .display_en(disp_en), .flip_y(cfg_flip_y), .layer_off(tm_layer_off), .bg_ctrl(mix_bg_ctrl),
     .px_text(mix_px_text), .px_nbg0(mix_px_nbg0),
     .px_nbg1(mix_px_nbg1), .px_nbg2(mix_px_nbg2),
     .px_nbg3(mix_px_nbg3), .px_bmp(mix_px_bmp),
@@ -821,6 +851,20 @@ generate
         assign pal1_cpu_q     = 16'hffff;
         assign mix1_q         = 16'hffff;
         assign mix1_r4e       = 16'h0000;
+        assign mix1_pal_addr  = 14'h0000;
+        assign mix1_pal_q     = 16'h0000;
+        assign rgb_b          = rgb_a;
+    end
+    else if (SINGLE_SCREEN) begin : g_single_screen_video
+        // Multi 32 address map, one physical copy.  Screen B's windows exist
+        // and read back, but resolve to the retained instance: screen_sel has
+        // already routed that instance's writes to whichever monitor is shown,
+        // so the CPU sees the state of the screen it is actually looking at.
+        // rgb_b mirrors rgb_a because the retained mixer *is* the selected
+        // screen's mixer; the top-level status[6] RGB mux stays harmless.
+        assign pal1_cpu_q     = pal0_cpu_q;
+        assign mix1_q         = mix0_q;
+        assign mix1_r4e       = mix0_r4e;
         assign mix1_pal_addr  = 14'h0000;
         assign mix1_pal_q     = 16'h0000;
         assign rgb_b          = rgb_a;
