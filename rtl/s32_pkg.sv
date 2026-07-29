@@ -8,14 +8,35 @@ package s32_pkg;
 
     // ------------------------------------------------------------------
     // SDRAM region bases (byte addresses) — DESIGN.md §4.2
+    //
+    // Target: the MiSTer 128 MB module = TWO 32M x 16 devices on one pin set.
+    // Address decode (rtl/mem/sdram.sv):
+    //   a[26]=device  a[25]=col[9]  a[24:23]=bank  a[22:10]=row  a[9:1]=col[8:0]
+    // so every aligned 8 MB block lies entirely inside ONE bank of ONE device.
+    //
+    // Regions are placed one hot reader per bank.  The controller closes the
+    // row on every read (ST_RD requests auto-precharge on the final CAS), so
+    // today this buys nothing by itself -- but no open-row / bank-interleaved
+    // controller is possible at all while maincpu and tiles share a bank, and
+    // that rework is the only thing that addresses the real SDRAM bottleneck.
+    //
+    //   device 0 bank 0  p0 maincpu     device 0 bank 2  p1 tiles
+    //   device 0 bank 1  p3 soundcpu    device 0 bank 3  p4 multipcm + MCU
+    //   device 1         p2 sprites (16 MB, its own device entirely)
+    //
+    // Every base is power-of-two aligned with zeros in all low bits so that
+    // each address generator is a CONCATENATION, not an adder.  Do not
+    // reintroduce an unaligned base: the old 0x600000 tile base needed a real
+    // 22-bit add on a clk_ram path, and getting one wrong silently fetches a
+    // different ROM region rather than failing.
     // ------------------------------------------------------------------
-    localparam [26:0] SDR_MAINCPU_BASE    = 27'h000_0000; // 2 MB
-    localparam [26:0] SDR_SOUNDCPU_BASE   = 27'h020_0000; // 4 MB
-    localparam [26:0] SDR_TILES_BASE      = 27'h060_0000; // 4 MB
-    localparam [26:0] SDR_MULTIPCM_BASE   = 27'h0A0_0000; // 4 MB
-    localparam [26:0] SDR_MCU_BASE        = 27'h0E0_0000; // V25 ROM (64 KiB)
-    localparam [26:0] SDR_SPARE_BASE     = SDR_MCU_BASE; // remainder of 2 MB slot
-    localparam [26:0] SDR_SPRITES_BASE    = 27'h100_0000; // 16 MB
+    localparam [26:0] SDR_MAINCPU_BASE    = 27'h000_0000; // dev0 bank0:  2 MB used
+    localparam [26:0] SDR_SOUNDCPU_BASE   = 27'h080_0000; // dev0 bank1:  4 MB
+    localparam [26:0] SDR_TILES_BASE      = 27'h100_0000; // dev0 bank2:  4 MB
+    localparam [26:0] SDR_MULTIPCM_BASE   = 27'h180_0000; // dev0 bank3:  4 MB
+    localparam [26:0] SDR_MCU_BASE        = 27'h1C0_0000; // dev0 bank3: V25 ROM 64 KiB
+    localparam [26:0] SDR_SPARE_BASE      = SDR_MCU_BASE; // remainder of that slot
+    localparam [26:0] SDR_SPRITES_BASE    = 27'h400_0000; // dev1:       16 MB
 
     // ------------------------------------------------------------------
     // Board descriptor (first 64 bytes of ioctl stream) — DESIGN.md §3.4

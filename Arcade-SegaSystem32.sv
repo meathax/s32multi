@@ -247,7 +247,23 @@ assign CLK_VIDEO = clk_sys;
 // drained into SDRAM. The loader itself is reset only by PLL startup so soft
 // reset and NVRAM transfers do not forget that ROM is already resident.
 wire video_reset = RESET | status[0] | buttons[1] | ~pll_locked;
-wire reset = video_reset | ioctl_download | ~rom_loaded | ~sdram_ready_sys;
+
+// SDRAM module size gate.  hps_io reports the fitted module in sdram_sz:
+// bit 15 = reading valid, [1:0] = 0 none / 1 = 32 MB / 2 = 64 MB / 3 = 128 MB.
+// The memory map now places the sprite region on the second device
+// (SDR_SPRITES_BASE bit 26), which only exists on the 128 MB module.  On a
+// smaller module those addresses alias back onto the first device and quietly
+// corrupt whatever shares them -- sprite garbage appearing minutes into a game,
+// with nothing in the logs.  Refuse to run instead, so the failure is legible.
+//
+// The reading is only trusted when bit 15 is set; an HPS that never reports
+// (older main firmware) leaves the core running rather than bricking it.
+wire [15:0] sdram_sz;
+wire        sdram_sz_valid  = sdram_sz[15];
+wire        sdram_too_small = sdram_sz_valid && (sdram_sz[1:0] < 2'd3);
+
+wire reset = video_reset | ioctl_download | ~rom_loaded | ~sdram_ready_sys
+           | sdram_too_small;
 
 // Synchronise the controller-ready level from clk_ram before it gates the
 // loader and the game logic in clk_sys.
@@ -340,6 +356,7 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io (
 
     .buttons(buttons),
     .status(status),
+    .sdram_sz(sdram_sz),
 
     .ioctl_download(ioctl_download),
     .ioctl_upload(ioctl_upload),

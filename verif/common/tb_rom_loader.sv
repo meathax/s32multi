@@ -104,7 +104,7 @@ task automatic send_sdr_pair(
     input [26:0] stream_even,
     input [7:0] lo,
     input [7:0] hi,
-    input [23:0] expected_word
+    input [26:1] expected_word
 );
 begin
     send_byte(8'd0, stream_even, lo);
@@ -134,7 +134,7 @@ task automatic check_sdr_pair(
     input [26:0] stream_even,
     input [7:0] lo,
     input [7:0] hi,
-    input [23:0] expected_word
+    input [26:1] expected_word
 );
 begin
     send_sdr_pair(stream_even, lo, hi, expected_word);
@@ -225,15 +225,15 @@ initial begin
 
     // First and last words of every SDRAM-backed region.  Distinct byte data
     // on each pair catches stale byte_lo and endian errors as well as mapping.
-    check_sdr_pair(OFF_MAINCPU,      8'h10, 8'h11, 24'h000000);
-    check_sdr_pair(OFF_SOUNDCPU-2,   8'h12, 8'h13, 24'h0FFFFF);
-    check_sdr_pair(OFF_SOUNDCPU,     8'h20, 8'h21, 24'h100000);
-    check_sdr_pair(OFF_TILES-2,      8'h22, 8'h23, 24'h2FFFFF);
-    check_sdr_pair(OFF_TILES,        8'h30, 8'h31, 24'h300000);
-    check_sdr_pair(OFF_MULTIPCM-2,   8'h32, 8'h33, 24'h4FFFFF);
-    check_sdr_pair(OFF_MULTIPCM,     8'h40, 8'h41, 24'h500000);
-    check_sdr_pair(OFF_MCU-2,        8'h42, 8'h43, 24'h6FFFFF);
-    check_sdr_pair(OFF_SPRITES,      8'h50, 8'h51, 24'h800000);
+    check_sdr_pair(OFF_MAINCPU,      8'h10, 8'h11, SDR_MAINCPU_BASE[26:1]);
+    check_sdr_pair(OFF_SOUNDCPU-2,   8'h12, 8'h13, SDR_MAINCPU_BASE[26:1]  + 26'h00FFFFF);
+    check_sdr_pair(OFF_SOUNDCPU,     8'h20, 8'h21, SDR_SOUNDCPU_BASE[26:1]);
+    check_sdr_pair(OFF_TILES-2,      8'h22, 8'h23, SDR_SOUNDCPU_BASE[26:1] + 26'h01FFFFF);
+    check_sdr_pair(OFF_TILES,        8'h30, 8'h31, SDR_TILES_BASE[26:1]);
+    check_sdr_pair(OFF_MULTIPCM-2,   8'h32, 8'h33, SDR_TILES_BASE[26:1]    + 26'h01FFFFF);
+    check_sdr_pair(OFF_MULTIPCM,     8'h40, 8'h41, SDR_MULTIPCM_BASE[26:1]);
+    check_sdr_pair(OFF_MCU-2,        8'h42, 8'h43, SDR_MULTIPCM_BASE[26:1] + 26'h01FFFFF);
+    check_sdr_pair(OFF_SPRITES,      8'h50, 8'h51, SDR_SPRITES_BASE[26:1]);
 
     // Optimized MRAs address each populated region from local offset zero.
     // These downloads must map identically to the legacy fixed stream and
@@ -241,14 +241,14 @@ initial begin
     send_byte(8'd4, 27'd0, 8'h61);
     check(!sdr_wr_req, "split main even byte parks locally");
     send_byte(8'd4, 27'd1, 8'h62);
-    check(sdr_wr_req && sdr_wr_addr === 24'h000000 &&
+    check(sdr_wr_req && sdr_wr_addr === SDR_MAINCPU_BASE[26:1] &&
           sdr_wr_din === 16'h6261, "split main maps to maincpu base");
     ack_sdr();
     check(!rom_loaded, "split region cannot open boot gate");
 
     send_byte(8'd9, 27'd0, 8'h71);
     send_byte(8'd9, 27'd1, 8'h72);
-    check(sdr_wr_req && sdr_wr_addr === 24'h800000 &&
+    check(sdr_wr_req && sdr_wr_addr === SDR_SPRITES_BASE[26:1] &&
           sdr_wr_din === 16'h7271, "split sprites map to sprite base");
     ack_sdr();
 
@@ -268,7 +268,7 @@ initial begin
     check(v25_wr && v25_waddr === 16'h0401 && v25_wdata === 8'h5A,
           "V25 odd source maps to odd destination");
     check(sdr_wr_req && ioctl_wait, "odd MCU byte raises SDRAM request/wait");
-    check(sdr_wr_addr === 24'h700200, "MCU pair destination word address");
+    check(sdr_wr_addr === SDR_MCU_BASE[26:1] + 26'h0000200, "MCU pair destination word address");
     check(sdr_wr_din === 16'h5AC7, "MCU pair written little-endian");
     check(sdr_wr_be === 2'b11, "MCU pair uses a full-word write");
     ack_sdr();
@@ -285,7 +285,7 @@ initial begin
     check(v25_wr && v25_waddr === 16'hFFF1 && v25_wdata === 8'h11,
           "GA2 reset partner FDDD maps to V25 destination FFF1");
     check(sdr_wr_req && ioctl_wait, "GA2 reset pair raises SDRAM request");
-    check(sdr_wr_addr === 24'h707FF8, "GA2 reset pair SDRAM word address");
+    check(sdr_wr_addr === SDR_MCU_BASE[26:1] + 26'h0007FF8, "GA2 reset pair SDRAM word address");
     check(sdr_wr_din === 16'h1102, "GA2 reset pair written little-endian");
     check(sdr_wr_be === 2'b11, "GA2 reset pair uses a full-word write");
     ack_sdr();
@@ -293,7 +293,8 @@ initial begin
 
     // Leave the very last stream word outstanding while download deasserts.
     // rom_loaded may rise only after that request has actually acknowledged.
-    send_sdr_pair(OFF_END-2, 8'hFE, 8'hFF, 24'hFFFFFF);
+    send_sdr_pair(OFF_END-2, 8'hFE, 8'hFF,
+                  SDR_SPRITES_BASE[26:1] + 26'h07FFFFF);
     @(negedge clk);
     ioctl_download = 1'b0;
     @(posedge clk);

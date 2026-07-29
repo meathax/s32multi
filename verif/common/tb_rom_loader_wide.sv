@@ -100,7 +100,7 @@ initial begin
     send_word(8'd0, OFF_MCU + 27'h40, 16'h5AC7);
     check(v25_wr && v25_waddr === 16'h0400 && v25_wdata === 8'hC7,
           "wide MCU inverse address");
-    check(sdr_wr_req && sdr_wr_addr === 24'h700200 &&
+    check(sdr_wr_req && sdr_wr_addr === SDR_MCU_BASE[26:1] + 26'h0000200 &&
           sdr_wr_din === 16'h5AC7 && sdr_wr_be === 2'b11,
           "wide MCU full-word write");
     ack_word();

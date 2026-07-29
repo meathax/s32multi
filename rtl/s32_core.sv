@@ -16,19 +16,32 @@ import s32_pkg::*;
 // for A/B testing: the MLAB lookup costs one extra raw clk_sys, which is inside
 // one architectural interval for Golden Axe's 16.108 MHz V60 but can occasionally
 // straddle a ce edge on OutRunners' 20 MHz V70.
+// S32_M32_PROFILE = "this build is a Multi 32 board".  Set by either the
+// OutRunners-only revision or the four-game Multi 32 revision, so every guard
+// below can be written once instead of twice (Verilog `ifdef has no ||).
+`ifdef S32_OUTRUNNERS_ONLY
+ `define S32_M32_PROFILE 1
+`endif
+`ifdef S32_MULTI32_ONLY
+ `define S32_M32_PROFILE 1
+`endif
+
 `ifndef S32_NO_MLAB_ROM_CACHE
 `ifdef S32_GOLDENAXE_ONLY
  `define S32_MLAB_ROM_CACHE 1
 `endif
-`ifdef S32_OUTRUNNERS_ONLY
+`ifdef S32_M32_PROFILE
  `define S32_MLAB_ROM_CACHE 1
 `endif
 `endif
 
 module s32_core #(
-`ifdef S32_OUTRUNNERS_ONLY
-    // Dedicated Multi 32 profile takes precedence over the shared QSF's
-    // System32-only default.
+`ifdef S32_M32_PROFILE
+    // Dedicated Multi 32 profiles take precedence over the shared QSF's
+    // System32-only default.  This arm MUST precede the S32_SYSTEM32_ONLY arm:
+    // verif/run_regression.sh deliberately passes -DS32_SYSTEM32_ONLY alongside
+    // the game macro, and Multi 32 needs the 128 KB work RAM, both palettes,
+    // both mixers and the MultiPCM that SYSTEM32_ONLY=1 compiles out.
     parameter SYSTEM32_ONLY = 1'b0
 `elsif S32_SYSTEM32_ONLY
     // The SegaS32 Quartus revision sets this macro so Cyclone V only pays for
@@ -171,30 +184,46 @@ module s32_core #(
     output     [89:0] debug_v25_img     // {sweep_done, first_valid, hash[23:0], first_line[63:0]}
 );
 
+// MULTI32_ONLY is implied by OUTRUNNERS_ONLY, so every OUTRUNNERS_ONLY ->
+// MULTI32_ONLY swap below is bit-identical for the existing s32OutRunners
+// revision.  That implication is what makes this reviewable: the dedicated
+// OutRunners build must not change at all.
 `ifdef S32_OUTRUNNERS_ONLY
-localparam GOLDENAXE_ONLY = 1'b0;
+localparam GOLDENAXE_ONLY  = 1'b0;
 localparam OUTRUNNERS_ONLY = 1'b1;
-localparam GAME_ONLY      = 1'b1;
+localparam MULTI32_ONLY    = 1'b1;
+localparam GAME_ONLY       = 1'b1;
+`elsif S32_MULTI32_ONLY
+// Four-game Multi 32 revision: harddunk, orunners, scross, titlef.
+localparam GOLDENAXE_ONLY  = 1'b0;
+localparam OUTRUNNERS_ONLY = 1'b0;
+localparam MULTI32_ONLY    = 1'b1;
+localparam GAME_ONLY       = 1'b1;
 `elsif S32_GOLDENAXE_ONLY
-localparam GOLDENAXE_ONLY = 1'b1;
+localparam GOLDENAXE_ONLY  = 1'b1;
 localparam OUTRUNNERS_ONLY = 1'b0;
-localparam GAME_ONLY      = 1'b1;
+localparam MULTI32_ONLY    = 1'b0;
+localparam GAME_ONLY       = 1'b1;
 `elsif S32_GA2_ONLY
-localparam GOLDENAXE_ONLY = 1'b0;
+localparam GOLDENAXE_ONLY  = 1'b0;
 localparam OUTRUNNERS_ONLY = 1'b0;
-localparam GAME_ONLY      = 1'b1;
+localparam MULTI32_ONLY    = 1'b0;
+localparam GAME_ONLY       = 1'b1;
 `elsif S32_HOLO_ONLY
-localparam GOLDENAXE_ONLY = 1'b0;
+localparam GOLDENAXE_ONLY  = 1'b0;
 localparam OUTRUNNERS_ONLY = 1'b0;
-localparam GAME_ONLY      = 1'b1;
+localparam MULTI32_ONLY    = 1'b0;
+localparam GAME_ONLY       = 1'b1;
 `elsif S32_JPARK_ONLY
-localparam GOLDENAXE_ONLY = 1'b0;
+localparam GOLDENAXE_ONLY  = 1'b0;
 localparam OUTRUNNERS_ONLY = 1'b0;
-localparam GAME_ONLY      = 1'b1;
+localparam MULTI32_ONLY    = 1'b0;
+localparam GAME_ONLY       = 1'b1;
 `else
-localparam GOLDENAXE_ONLY = 1'b0;
+localparam GOLDENAXE_ONLY  = 1'b0;
 localparam OUTRUNNERS_ONLY = 1'b0;
-localparam GAME_ONLY      = 1'b0;
+localparam MULTI32_ONLY    = 1'b0;
+localparam GAME_ONLY       = 1'b0;
 `endif
 
 // Dedicated Golden Axe hardware constants. The MRA descriptor is still loaded
@@ -226,6 +255,32 @@ wire [6:0] cfg_prot_sel          = PROT_NONE;
 wire       cfg_sprite_bank_valid = 1'b1;
 wire [1:0] cfg_sprite_bank_mask  = 2'b11;
 wire       cfg_flip_y            = 1'b0;
+`elsif S32_MULTI32_ONLY
+// Four-game Multi 32 revision.  Everything common to harddunk / orunners /
+// scross / titlef is pinned so Quartus can fold it away, but has_adc, has_ppi
+// and orunners MUST stay descriptor-driven -- they are the per-game selectors:
+//
+//   game      multi32 has_ppi has_adc orunners
+//   harddunk     1       1       0       0      6-player, 8255 PPI
+//   orunners     1       0       1       1      banked ADC, two cockpits
+//   scross       1       0       1       0      ADC, no PPI
+//   titlef       1       0       0       0      pure digital
+//
+// So a single build cannot hardwire the I/O straps the way the single-game
+// revisions do: harddunk needs PPI-without-ADC and orunners/scross need
+// ADC-without-PPI.
+wire       cfg_multi32           = 1'b1;
+wire       cfg_has_v25           = 1'b0;   // none of the four is protected
+wire       cfg_v25_table         = 1'b0;
+wire       cfg_has_adc           = board.has_adc;   // orunners, scross
+wire       cfg_has_track         = 1'b0;   // uPD4701 is the SegaSonic harness
+wire       cfg_has_ppi           = board.has_ppi;   // harddunk
+wire       cfg_has_dsp_hle       = 1'b0;
+wire       cfg_dual_pcb          = 1'b0;
+wire [6:0] cfg_prot_sel          = PROT_NONE;
+wire       cfg_sprite_bank_valid = 1'b1;
+wire [1:0] cfg_sprite_bank_mask  = 2'b11;  // all four have 16 MiB sprite ROMs
+wire       cfg_flip_y            = 1'b0;   // all four are horizontal
 `else
 wire       cfg_multi32           = board.multi32;
 wire       cfg_has_v25           = board.has_v25;
@@ -245,7 +300,7 @@ wire       cfg_flip_y            = board.flip_y;
 // retains the descriptor-selected path when SYSTEM32_ONLY is false. System 32
 // GAME_ONLY profiles force the single-screen configuration. The dedicated
 // OutRunners profile is the explicit Multi 32 exception and fixes it high.
-wire is_multi32 = OUTRUNNERS_ONLY ? 1'b1 :
+wire is_multi32 = MULTI32_ONLY ? 1'b1 :
                   (SYSTEM32_ONLY || GAME_ONLY) ? 1'b0 : cfg_multi32;
 
 // ---------------------------------------------------------------------------
@@ -637,9 +692,12 @@ s32_tilemap tilemap (
     .lb_we(tm_lb_we), .lb_layer(tm_lb_layer), .lb_x(tm_lb_x), .lb_pix(tm_lb_pix)
 );
 // The 4 MB tile region begins at the non-power-of-two-aligned 0x600000.
-// Concatenating only the high address bits placed reads at 0x400000 and would
-// fetch sound ROM on hardware; add the renderer's region-local row address.
-assign sdr_p1_addr = SDR_TILES_BASE[26:3] + {3'b000, tile_rom_addr};
+// A concatenation is only valid because SDR_TILES_BASE is now 16 MB aligned
+// and the region is 4 MB, so the base has zeros in every bit the renderer
+// drives.  It was NOT valid against the old unaligned 0x600000 base -- that
+// attempt placed reads at 0x400000 and fetched sound ROM on hardware.  Keep
+// the base aligned or go back to an adder; do not half-do it.
+assign sdr_p1_addr = {SDR_TILES_BASE[26:22], tile_rom_addr};
 
 // sprite engine
 wire [7:0] sprctl_q;
@@ -864,7 +922,7 @@ wire [15:0] sh_rdata;
 wire [23:0] zrom_ba;
 wire [21:0] mpcm_ba;
 
-s32_soundsys #(.SYSTEM32_ONLY(SYSTEM32_ONLY), .MULTI32_ONLY(OUTRUNNERS_ONLY)) sound (
+s32_soundsys #(.SYSTEM32_ONLY(SYSTEM32_ONLY), .MULTI32_ONLY(MULTI32_ONLY)) sound (
     .clk(clk_sys), .ce_z80(ce_z80), .ce_fm(ce_fm), .ce_pcm(ce_pcm),
     .rst(rst),
     .z80_reset(~io0_cnt2),
@@ -885,10 +943,12 @@ s32_soundsys #(.SYSTEM32_ONLY(SYSTEM32_ONLY), .MULTI32_ONLY(OUTRUNNERS_ONLY)) so
     .mpcm_ack(sdr_p4_ack),
     .audio_l(audio_l), .audio_r(audio_r)
 );
-// B1: SDRAM address hookup for sound ports — add region bases so fetches
-// land in the soundcpu / multipcm regions instead of address 0.
-assign sdr_p3_addr = SDR_SOUNDCPU_BASE[26:1] + {1'b0, zrom_ba[23:1]};
-assign sdr_p4_addr = SDR_MULTIPCM_BASE[26:1] + {3'b000, mpcm_ba[21:1]};
+// B1: SDRAM address hookup for sound ports.  Both bases are aligned to at
+// least their region size, so these are concatenations rather than adders and
+// an out-of-region offset mirrors inside its own bank instead of running into
+// the neighbouring region.  p3 gets the full 8 MB of bank 1 (region is 4 MB).
+assign sdr_p3_addr = {SDR_SOUNDCPU_BASE[26:23], zrom_ba[22:1]};
+assign sdr_p4_addr = {SDR_MULTIPCM_BASE[26:22], mpcm_ba[21:1]};
 
 // ---------------------------------------------------------------------------
 // IO-7: S32COMM shared RAM + host-side flip-flops. The communication board is
@@ -1016,7 +1076,7 @@ generate
             assign trk_q[t] = 8'hff;
         end
     end
-    else if (GAME_ONLY && !OUTRUNNERS_ONLY) begin : g_game_no_analog
+    else if (GAME_ONLY && !MULTI32_ONLY) begin : g_game_no_analog
         // The trackball counters (sonic) stay compiled out of the dedicated
         // release, but the MSM6253 ADC is tiny and the gun/positional games on
         // this profile (alien3, jpark: descriptor has_adc=1) read their aim
@@ -1066,7 +1126,7 @@ generate
         // OutRunners takes this banked-ADC branch because it is Multi 32, but
         // its descriptor sets has_track=0, so the three counters are dead logic
         // in that revision.
-        if (OUTRUNNERS_ONLY) begin : g_no_tracks
+        if (MULTI32_ONLY) begin : g_no_tracks
             for (t = 0; t < 3; t = t + 1) begin : tracks
                 assign trk_q[t] = 8'hff;
             end
@@ -1089,8 +1149,11 @@ endgenerate
 wire [7:0] ppi_q;
 generate
     // The 8255 is the 4/6-player expansion board (ga2, spidman, harddunk).
-    // OutRunners is a two-station driving cabinet with has_ppi=0, and sel_ppi
-    // is already gated by cfg_has_ppi, so the chip is unreachable there.
+    // OutRunners is a two-station driving cabinet with has_ppi=0, so the
+    // dedicated OutRunners revision drops the chip entirely.  The four-game
+    // Multi 32 revision MUST keep it: harddunk is a six-player cabinet and
+    // reads it at 0xC00060.  sel_ppi is already gated by cfg_has_ppi, so the
+    // other three games leave it unreachable at runtime.
     if (OUTRUNNERS_ONLY) begin : g_no_ppi
         assign ppi_q = 8'hff;
     end
@@ -1213,7 +1276,7 @@ assign v25_dbg_unm_raw = 1'b0;
 // otherwise instantiated unconditionally and carries a 2 KiB dual-port store
 // plus its table ROM; with cfg_has_v25 tied low it can only ever return the
 // open-bus value the read mux already substitutes for sel_v25.
-`ifdef S32_OUTRUNNERS_ONLY
+`ifdef S32_M32_PROFILE
 assign v25_q = 8'hff;
 `else
 
@@ -1328,9 +1391,8 @@ reg        sdr_p5_req_r;
 reg [26:3] sdr_p5_addr_r;
 always @(posedge clk_sys) begin
     sdr_p5_req_r  <= sweep_active ? sweep_req_r : v25_p5_req;
-    sdr_p5_addr_r <= SDR_MCU_BASE[26:3] +
-                     (sweep_active ? {9'b0, sweep_line}
-                                   : {9'b0, v25_rom_addr});
+    sdr_p5_addr_r <= {SDR_MCU_BASE[26:16],
+                      (sweep_active ? sweep_line : v25_rom_addr)};
 end
 assign sdr_p5_req  = sdr_p5_req_r;
 assign sdr_p5_addr = sdr_p5_addr_r;

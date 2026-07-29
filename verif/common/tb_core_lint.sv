@@ -44,6 +44,27 @@ module tb_core_lint;
         if (core.OUTRUNNERS_ONLY !== 1'b1 || core.GAME_ONLY !== 1'b1)
             $fatal(1, "OutRunners release pruning not enabled");
         $display("CORE OUTRUNNERS PROFILE LINT PASS");
+`elsif S32_MULTI32_ONLY
+        // The four-game Multi 32 revision.  These assertions exist because the
+        // profile is defined by a macro ORDER that is easy to get wrong:
+        // run_regression passes -DS32_SYSTEM32_ONLY alongside the game macro,
+        // so if the S32_MULTI32_ONLY arm did not precede the S32_SYSTEM32_ONLY
+        // arm this build would silently become a single-screen System 32 core
+        // with half the work RAM and no MultiPCM.
+        if (core.SYSTEM32_ONLY !== 1'b0) $fatal(1, "Multi 32 profile retained System32 pruning");
+        if (core.WRAM_WORDS != 65536)    $fatal(1, "Multi 32 work RAM is not 64K x 16");
+        if (core.is_multi32 !== 1'b1)    $fatal(1, "Multi 32 profile did not select Multi 32");
+        if (core.MULTI32_ONLY !== 1'b1 || core.GAME_ONLY !== 1'b1)
+            $fatal(1, "Multi 32 release pruning not enabled");
+        if (core.OUTRUNNERS_ONLY !== 1'b0)
+            $fatal(1, "four-game profile must not enable the OutRunners-only pruning");
+        // has_adc / has_ppi must remain descriptor-driven: harddunk needs the
+        // 8255 without the ADC, orunners and scross need the ADC without it.
+        if (core.cfg_has_ppi !== core.board.has_ppi)
+            $fatal(1, "Multi 32 profile hardwired has_ppi -- harddunk needs the 8255");
+        if (core.cfg_has_adc !== core.board.has_adc)
+            $fatal(1, "Multi 32 profile hardwired has_adc -- orunners/scross need the ADC");
+        $display("CORE MULTI32 PROFILE LINT PASS");
 `elsif S32_SYSTEM32_ONLY
         if (core.SYSTEM32_ONLY !== 1'b1) $fatal(1, "System32 profile parameter not enabled");
         if (core.WRAM_WORDS != 32768)    $fatal(1, "System32 work RAM is not 32K x 16");
