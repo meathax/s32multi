@@ -121,18 +121,22 @@ wire [15:0] joystick_r_analog_0;
 wire        core_hs, core_vs;
 wire        mode_416_active;
 wire [24:0] ps2_mouse;
-// The single universal RBF accepts every supported single-screen System 32
-// descriptor. Runtime fields select the real V25 path for GA2/Arabian Fight;
-// all other supported sets retain the standard-board peripherals and HLEs.
+// This RBF accepts one board: Sega System Multi 32 (837-8676) running
+// OutRunners. Pin the runtime descriptor to that board's configuration so a
+// mismatched MRA cannot select hardware this image does not contain, and so
+// Quartus can fold every System-32-only arm away entirely: two 315-5296 I/O
+// chips on two JAMMA edges, two 315-5388/5242 video paths, a V70 at 20 MHz,
+// the 837-7536 analog PCB, no V25 MCU, no protection responder.
 always @(*) begin
     active_board = board_desc;
-`ifdef S32_PROFILE_STANDARD
-    active_board.multi32          = 1'b0;
-    // The universal image contains the real V25 QIP; descriptor bits select
-    // it for GA2/Arabian Fight and retain HLE behavior for other variants.
-    active_board.has_v25          = board_desc.has_v25;
-    active_board.v25_table        = board_desc.v25_table;
-`endif
+    active_board.multi32          = 1'b1;
+    active_board.has_adc          = 1'b1;
+    active_board.has_ppi          = 1'b0;
+    active_board.has_motor_hle    = 1'b0;
+    active_board.gun_aim          = 1'b0;
+    active_board.coin_swap        = 1'b0;
+    active_board.flip_y           = 1'b0;
+    active_board.gear_toggle      = 1'b0;
 end
 
 assign VGA_F1 = 0;
@@ -166,16 +170,10 @@ localparam CONF_STR = {
     "O[6],Screen (Multi32),A,B;",
 `endif
     "O[7],Service Mode,Off,On;",
-    // Analog sticks/USB lightguns remain the default positional source;
-    // GunCon SNAC is an additional opt-in source for either player.
-    "O[31:30],P1 Gun Input,Analog Stick / USB Lightgun,SNAC Port 1;",
-    "o[1:0],P2 Gun Input,Analog Stick / USB Lightgun,SNAC Port 2;",
-    // JTFRAME-compatible generic lightgun presentation controls.  status[8]
-    // intentionally follows the MiSTer/JTFRAME Sinden-border convention;
-    // status[9] is already the established CRT Adjust option in this core.
-    "O[8],Sinden Borders,Off,On;",
-    "O[34],Gun Crosshair,Off,On;",
-    "O[37:36],Gun Sensitivity,Normal,High,Low,Lowest;",
+    // status[8], status[30:34], status[36:37] were the lightgun/GunCon SNAC
+    // options (Sinden Borders, Gun Crosshair, Gun Sensitivity, P1/P2 Gun
+    // Input) -- OutRunners has no positional-gun cabinet. Left unallocated
+    // rather than reclaimed, matching the status[29] convention below.
     // status[29] is RESERVED and intentionally unused.  It used to select
     // "V60 Fetch,Fast,PCB (Reset)"; the Fast instruction-fetch transport has
     // been removed and the core always uses the PCB fetch path.  The bit is
@@ -285,9 +283,9 @@ wire is_multi32 = active_board.multi32;
 // hardware-visible cadence is the standing rule.  The Dark Edge countdown
 // deficit that motivated the change is real but must be fixed without
 // overclocking the bus -- it is a separate, still-open item.
-wire [15:0] cpu_ce_inc = active_board.has_v25
-                         ? (active_board.v25_table ? 16'd32768 : 16'd21848)
-                         : (is_multi32 ? 16'd27127 : 16'd21848);
+// No V25 on this board (OutRunners is unprotected); the bus runs at the
+// Multi 32 V70 rate, 40 MHz / 2 = 20 MHz (16'd27127/65536 x 48.317307 MHz).
+wire [15:0] cpu_ce_inc = 16'd27127;
 always @(posedge clk_sys) begin
     logic [16:0] s;
     if (reset) begin
@@ -348,26 +346,9 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io (
     .ps2_mouse(ps2_mouse)
 );
 
-// hps_io toggles ps2_mouse[24] for each host report.  Decode that toggle once
-// in the clk_sys domain so the P1 generic lightgun sees a one-clock event;
-// P2 deliberately receives no mouse stream because MiSTer exposes one shared
-// PS/2 mouse packet path.
-reg ps2_mouse_event_d;
-wire ps2_mouse_strobe = ps2_mouse[24] ^ ps2_mouse_event_d;
-// JTFRAME's MiSTer target sign-extends the PS/2 report with flags[4]/[5]
-// before its `cv` helper converts the 9-bit packet to an 8-bit two's-
-// complement delta (an arithmetic one-bit scale reduction).  Preserve that
-// exact packet interpretation instead of treating the raw byte's bit 7 as a
-// standalone sign.
-wire signed [8:0] ps2_mouse_dx9 = $signed({ps2_mouse[4], ps2_mouse[15:8]});
-wire signed [8:0] ps2_mouse_dy9 = $signed({ps2_mouse[5], ps2_mouse[23:16]});
-wire signed [8:0] ps2_mouse_dx_jt9 = ps2_mouse_dx9 >>> 1;
-wire signed [8:0] ps2_mouse_dy_jt9 = ps2_mouse_dy9 >>> 1;
-wire        [7:0] ps2_mouse_dx_jt = ps2_mouse_dx_jt9[7:0];
-wire        [7:0] ps2_mouse_dy_jt = ps2_mouse_dy_jt9[7:0];
-always @(posedge clk_sys) begin
-    ps2_mouse_event_d <= ps2_mouse[24];
-end
+// No lightgun on this board: the PS/2 mouse decode chain that fed it
+// (ps2_mouse_strobe/dx_jt/dy_jt) was removed. ps2_mouse itself stays
+// connected to hps_io since that port always exists on the framework side.
 
 // MiSTer MRA NVRAM is a byte stream at index 3. Convert the EEPROM's
 // 64x16 little-endian shadow into that stream for save uploads.
@@ -398,7 +379,12 @@ wire        eep_wr;
 wire  [5:0] eep_waddr;
 wire [15:0] eep_wdata;
 
-s32_rom_loader #(.WIDE(1), .CLEAR_RF_WAVE(1)) loader (
+// CLEAR_RF_WAVE=0: this board has no RF5C68, so the MultiPCM aperture holds
+// real sample ROM. The 2026-08-14 revert (see rtl/audio/s32_soundsys.sv) also
+// means this repository never actually used the wave-RAM SDRAM aperture the
+// clear was written for; zeroing it here would corrupt the first 64 KiB of
+// genuine MultiPCM sample data before every game boot.
+s32_rom_loader #(.WIDE(1), .CLEAR_RF_WAVE(0)) loader (
     .clk(clk_sys), .rst(~pll_locked),
     .mem_ready(sdram_ready_sys),
     .ioctl_download(ioctl_download), .ioctl_index(ioctl_index[7:0]),
@@ -494,61 +480,12 @@ wire [7:0] radm_p1a = {p1a_dig[7:3], ~joystick_0[7],
                         ~joystick_0[6], 1'b1};
 wire [7:0] p2a_dig = p_dig(joystick_1);
 
-// Generic JTFRAME-compatible gun sources.  MiSTer's joystick direction bits
-// are {right,left,down,up} in the HPS word; the adapter consumes JTFRAME's
-// {down,up,left,right} game_joy order.  The source is instantiated for both
-// players even though the shared PS/2 packet stream is assigned to P1.
-wire [8:0] lightgun_width  = mode_416_active ? 9'd416 : 9'd320;
-wire [8:0] lightgun_height = 9'd224;
-wire [3:0] lightgun_joy_p1 = {joystick_0[2], joystick_0[3],
-                               joystick_0[1], joystick_0[0]};
-wire [3:0] lightgun_joy_p2 = {joystick_1[2], joystick_1[3],
-                               joystick_1[1], joystick_1[0]};
-wire [8:0] generic_gun_p1_x, generic_gun_p1_y;
-wire [8:0] generic_gun_p2_x, generic_gun_p2_y;
-wire [7:0] generic_adc_p1_x, generic_adc_p1_y;
-wire [7:0] generic_adc_p2_x, generic_adc_p2_y;
-wire       generic_gun_p1_strobe, generic_gun_p2_strobe;
+// No lightgun, GunCon SNAC, or positional-gun cabinet on this board: those
+// were System-32-only peripherals (Alien 3, Jurassic Park). USER_IN/USER_OUT
+// are free for a future comm-board link. gun_aim/coin_swap are hardcoded 0 in
+// active_board above, so every branch that used to key off them is gone too.
+assign USER_OUT = 7'h7f;
 
-s32_lightgun #(.DEFAULT_WIDTH(320), .DEFAULT_HEIGHT(224)) generic_lightgun_p1 (
-    .clk          (clk_sys),
-    .rst          (reset),
-    .vs           (core_vs),
-    .screen_width (lightgun_width),
-    .screen_height(lightgun_height),
-    .rotate       (2'b00),
-    .sensitivity  (status[37:36]),
-    .joyana       (joystick_l_analog_0),
-    .joy_dir      (lightgun_joy_p1),
-    .mouse_dx     (ps2_mouse_dx_jt),
-    .mouse_dy     (ps2_mouse_dy_jt),
-    .mouse_strobe (ps2_mouse_strobe),
-    .gun_x        (generic_gun_p1_x),
-    .gun_y        (generic_gun_p1_y),
-    .adc_x        (generic_adc_p1_x),
-    .adc_y        (generic_adc_p1_y),
-    .gun_strobe   (generic_gun_p1_strobe)
-);
-
-s32_lightgun #(.DEFAULT_WIDTH(320), .DEFAULT_HEIGHT(224)) generic_lightgun_p2 (
-    .clk          (clk_sys),
-    .rst          (reset),
-    .vs           (core_vs),
-    .screen_width (lightgun_width),
-    .screen_height(lightgun_height),
-    .rotate       (2'b00),
-    .sensitivity  (status[37:36]),
-    .joyana       (joystick_l_analog_1),
-    .joy_dir      (lightgun_joy_p2),
-    .mouse_dx     (8'd0),
-    .mouse_dy     (8'd0),
-    .mouse_strobe (1'b0),
-    .gun_x        (generic_gun_p2_x),
-    .gun_y        (generic_gun_p2_y),
-    .adc_x        (generic_adc_p2_x),
-    .adc_y        (generic_adc_p2_y),
-    .gun_strobe   (generic_gun_p2_strobe)
-);
 // Rad Rally and Slip Stream expose a single cabinet Gear Change toggle, not a
 // momentary switch or four-position encoding.  Keep this semantic independent
 // from Rad Rally's separate EPR-14084 communication-board selector.
@@ -566,162 +503,11 @@ always @(posedge clk_sys) begin
     end
 end
 wire [7:0] gear_toggle_p1a = {p1a_dig[7:1], ~radr_gear};
-// Dark Edge leaves raw player-port bit 0 unused and places its first two
-// buttons on bits 1/2.  Adapt MiSTer's logical B1/B2 here; the remaining
-// three buttons are on the PPI below.  Select from the existing descriptor so
-// this remains a shared universal-profile implementation, not a game build.
-wire [7:0] darkedge_p1a = {p1a_dig[7:4], 1'b1,
-                           ~joystick_0[5], ~joystick_0[4], 1'b1};
-wire [7:0] darkedge_p2a = {p2a_dig[7:4], 1'b1,
-                           ~joystick_1[5], ~joystick_1[4], 1'b1};
 
-// The System11 Point Blank 2 transport is a Jurassic Park-only option.
-// Alien 3 is identified by the gun descriptor's distinct coin_swap cabinet
-// wiring and must remain a pure analog-stick/USB-lightgun path: SNAC polling,
-// coordinate overrides, buttons, coins, and USER_OUT activity are all held
-// inactive for that title regardless of saved OSD status bits.
-wire gun_snac_supported = active_board.gun_aim && !active_board.coin_swap;
-wire p1_snac_mode = gun_snac_supported && (status[31:30] == 2'b01);
-wire p2_snac_mode = gun_snac_supported && (status[33:32] == 2'b01);
-wire snac_enabled = p1_snac_mode | p2_snac_mode;
-wire snac_select1_n, snac_select2_n, snac_command, snac_serial_clk;
-wire snac_p1_connected, snac_p2_connected;
-wire snac_p1_sample_valid, snac_p2_sample_valid;
-wire [7:0] snac_p1_device_id, snac_p2_device_id;
-wire [15:0] snac_p1_buttons, snac_p2_buttons;
-wire [8:0] snac_p1_raw_x, snac_p1_raw_y, snac_p2_raw_x, snac_p2_raw_y;
-wire snac_p1_gun_aim_valid, snac_p2_gun_aim_valid;
-wire [9:0] snac_p1_gun_x, snac_p2_gun_x;
-wire [7:0] snac_p1_gun_y, snac_p2_gun_y;
-// Match the donor's GunCon identification gate: a valid PSX response is not
-// enough to claim a positional gun until the returned device ID is 0x63.
-// Button routing intentionally uses this gate, not optical-coordinate range;
-// a real gun can report an off-screen aim while its trigger/Cross remain live.
-wire snac_p1_gun = p1_snac_mode && snac_p1_connected &&
-                   (snac_p1_device_id == 8'h63);
-wire snac_p2_gun = p2_snac_mode && snac_p2_connected &&
-                   (snac_p2_device_id == 8'h63);
-
-s32_guncon_snac guncon_snac (
-    .clk(clk_sys), .rst(reset),
-    .enable_p1(p1_snac_mode), .enable_p2(p2_snac_mode),
-    .frame_sync(VGA_VS),
-    .data_in(USER_IN[4]), .ack_in(USER_IN[3]),
-    .select1_n(snac_select1_n), .select2_n(snac_select2_n),
-    .command(snac_command), .serial_clk(snac_serial_clk),
-    .p1_connected(snac_p1_connected), .p2_connected(snac_p2_connected),
-    .p1_sample_valid(snac_p1_sample_valid),
-    .p2_sample_valid(snac_p2_sample_valid),
-    .p1_device_id(snac_p1_device_id), .p2_device_id(snac_p2_device_id),
-    .p1_buttons(snac_p1_buttons), .p2_buttons(snac_p2_buttons),
-    .p1_raw_x(snac_p1_raw_x), .p1_raw_y(snac_p1_raw_y),
-    .p2_raw_x(snac_p2_raw_x), .p2_raw_y(snac_p2_raw_y),
-    .p1_gun_aim_valid(snac_p1_gun_aim_valid),
-    .p2_gun_aim_valid(snac_p2_gun_aim_valid),
-    .p1_gun_x(snac_p1_gun_x), .p2_gun_x(snac_p2_gun_x),
-    .p1_gun_y(snac_p1_gun_y), .p2_gun_y(snac_p2_gun_y)
-);
-
-// USER_OUT follows the standard GunCon SNAC wiring used by the donor:
-// bit0=P2 select, bit1=P1 select, bit2=COMMAND, bit5=serial clock, and bit6
-//=composite sync. CSYNC is asserted only after a connected GunCon is
-// identified, matching the Point Blank 2 integration; a generic SNAC device
-// on an accidentally selected port sees the idle-high line. Keep the bus
-// idle-high unless SNAC is explicitly selected.
-assign USER_OUT = snac_enabled ?
-                  {(snac_p1_gun || snac_p2_gun) ? ~(VGA_HS ^ VGA_VS) : 1'b1,
-                   snac_serial_clk, 2'b11, snac_command,
-                   snac_select1_n, snac_select2_n} : 7'h7f;
-
-wire [7:0] host_gun_p1_x = generic_adc_p1_x;
-wire [7:0] host_gun_p1_y = generic_adc_p1_y;
-wire [7:0] host_gun_p2_x = generic_adc_p2_x;
-wire [7:0] host_gun_p2_y = generic_adc_p2_y;
-// Alien 3 and Jurassic Park share the generic JTFRAME-compatible absolute
-// host path.  GunCon SNAC retains its independent calibrated-coordinate
-// override and remains descriptor-gated to Jurassic Park.
-wire [7:0] gun_adc_p1_x = (p1_snac_mode && snac_p1_gun_aim_valid)
-                           ? snac_p1_gun_x[9:2] : host_gun_p1_x;
-wire [7:0] gun_adc_p1_y = (p1_snac_mode && snac_p1_gun_aim_valid)
-                           ? snac_p1_gun_y : host_gun_p1_y;
-wire [7:0] gun_adc_p2_x = (p2_snac_mode && snac_p2_gun_aim_valid)
-                           ? snac_p2_gun_x[9:2] : host_gun_p2_x;
-wire [7:0] gun_adc_p2_y = (p2_snac_mode && snac_p2_gun_aim_valid)
-                           ? snac_p2_gun_y : host_gun_p2_y;
-wire gun_snac_trigger_p1 = snac_p1_gun && snac_p1_buttons[13];
-wire gun_snac_trigger_p2 = snac_p2_gun && snac_p2_buttons[13];
-wire gun_snac_button2_p1 = snac_p1_gun && snac_p1_buttons[12];
-wire gun_snac_button2_p2 = snac_p2_gun && snac_p2_buttons[12];
-wire gun_snac_coin_p1 = snac_p1_gun && snac_p1_buttons[14];
-wire gun_snac_coin_p2 = snac_p2_gun && snac_p2_buttons[14];
-
-// The shared HPS mouse's left button is the generic USB-lightgun trigger.
-// Once a valid GunCon is identified its trigger remains authoritative; a
-// selected-but-disconnected SNAC port still falls back to the host path.
-wire generic_mouse_trigger_p1 = active_board.gun_aim &&
-                                !snac_p1_gun && ps2_mouse[0];
-
-// Convert the normalized GunCon coordinate to the same native raster space as
-// the generic adapter for the optional core-side crosshair.
-function automatic [8:0] lightgun_adc_to_screen(
-    input [7:0] adc,
-    input [8:0] dimension
-);
-    reg [16:0] product;
-    begin
-        product = adc * dimension;
-        lightgun_adc_to_screen = product[16:8];
-    end
-endfunction
-
-wire [8:0] display_gun_p1_x =
-    (p1_snac_mode && snac_p1_gun_aim_valid)
-      ? lightgun_adc_to_screen(snac_p1_gun_x[9:2], lightgun_width)
-      : generic_gun_p1_x;
-wire [8:0] display_gun_p1_y =
-    (p1_snac_mode && snac_p1_gun_aim_valid)
-      ? lightgun_adc_to_screen(snac_p1_gun_y, lightgun_height)
-      : generic_gun_p1_y;
-wire [8:0] display_gun_p2_x =
-    (p2_snac_mode && snac_p2_gun_aim_valid)
-      ? lightgun_adc_to_screen(snac_p2_gun_x[9:2], lightgun_width)
-      : generic_gun_p2_x;
-wire [8:0] display_gun_p2_y =
-    (p2_snac_mode && snac_p2_gun_aim_valid)
-      ? lightgun_adc_to_screen(snac_p2_gun_y, lightgun_height)
-      : generic_gun_p2_y;
-
-// GunCon trigger is the same active-low P1_A bit used by MRA button A. Keep
-// ordinary MiSTer A/B controls additive when SNAC is connected. Alien3's
-// second live P1_A/P2_A bit is the gun's attached Button, so GunCon A (the
-// donor's Start-side auxiliary button) is mapped there for that descriptor.
-// Alien3 cabinet Start is still retained as the trigger alias from its special
-// coin/trigger wiring; Jurassic Park does not use that alias.
-wire gun_p1_button1 = p1a_dig[0] & ~(snac_p1_gun && gun_snac_trigger_p1)
-                                  & ~generic_mouse_trigger_p1;
-wire gun_p2_button1 = p2a_dig[0] & ~(snac_p2_gun && gun_snac_trigger_p2);
-wire gun_p1_button2 = p1a_dig[1] & ~(snac_p1_gun && gun_snac_button2_p1);
-wire gun_p2_button2 = p2a_dig[1] & ~(snac_p2_gun && gun_snac_button2_p2);
-wire [7:0] gun_p1a = {p1a_dig[7:2], gun_p1_button2, gun_p1_button1};
-wire [7:0] gun_p2a = {p2a_dig[7:2], gun_p2_button2, gun_p2_button1};
-// MAME's Alien3 P1_A/P2_A masks leave only BUTTON1/2 (the trigger and the
-// second cabinet button) connected; direction and BUTTON3 bits are physically
-// unused. Start remains a convenience alias for the trigger bit.
-wire [7:0] alien3_p1a = {6'h3f, gun_p1a[1], gun_p1a[0] & ~joystick_0[10]};
-wire [7:0] alien3_p2a = {6'h3f, gun_p2a[1], gun_p2a[0] & ~joystick_1[10]};
-// Jurassic Park's port mask leaves only BUTTON1 (Shoot) connected.
-wire [7:0] jpark_p1a = {7'h7f, gun_p1a[0]};
-wire [7:0] jpark_p2a = {7'h7f, gun_p2a[0]};
-wire [7:0] core_p1a = active_board.gun_aim ?
-                       (active_board.coin_swap ? alien3_p1a : jpark_p1a) :
-                       (active_board.prot_sel == PROT_DARKEDGE) ? darkedge_p1a :
-                       active_board.gear_toggle ? gear_toggle_p1a :
+wire [7:0] core_p1a = active_board.gear_toggle ? gear_toggle_p1a :
                        (active_board.digital_profile == DIGITAL_RADM) ? radm_p1a :
                        p1a_dig;
-wire [7:0] core_p2a = active_board.gun_aim ?
-                       (active_board.coin_swap ? alien3_p2a : jpark_p2a) :
-                       (active_board.prot_sel == PROT_DARKEDGE) ? darkedge_p2a :
-                       p2a_dig;
+wire [7:0] core_p2a = p2a_dig;
 
 wire [7:0] adc_ch [0:7];
 // MiSTer reports each analog-stick axis as signed -128..+127. Split the right
@@ -750,10 +536,13 @@ s32_driving_controls driving_controls (
 // are the analog pedals, with A/B as full-scale digital fallbacks. The wheel
 // follows the current deadzoned stick coordinate directly; retaining an IIR
 // history here made continuous sweeps pause at stale intermediate positions.
-assign adc_ch[0] = active_board.gun_aim ? gun_adc_p1_x : driving_wheel;
-assign adc_ch[1] = active_board.gun_aim ? gun_adc_p1_y : driving_accel;
-assign adc_ch[2] = active_board.gun_aim ? gun_adc_p2_x : driving_brake;
-assign adc_ch[3] = active_board.gun_aim ? gun_adc_p2_y : 8'hff;
+// P2's axes (adc_ch[4..7], the Multi 32 analog_bank half) are wired in a
+// later revision; OutRunners is a two-cockpit cabinet and this is currently
+// P1-only.
+assign adc_ch[0] = driving_wheel;
+assign adc_ch[1] = driving_accel;
+assign adc_ch[2] = driving_brake;
+assign adc_ch[3] = 8'hff;
 assign adc_ch[4] = 8'h80;
 assign adc_ch[5] = 8'h80;
 assign adc_ch[6] = 8'h80;
@@ -765,22 +554,13 @@ assign adc_ch[7] = 8'h80;
 wire [7:0] portc = 8'hff;
 wire test_btn = status[7] | joystick_0[12] | joystick_1[12];
 wire svc_btn  = joystick_0[13] | joystick_1[13];
-wire [7:0] svc12_generic = ~{
+wire [7:0] svc12 = ~{
                       2'b00,
-                      joystick_1[10] | (snac_p2_gun && snac_p2_buttons[12]),
-                      joystick_0[10] | (snac_p1_gun && snac_p1_buttons[12]),
-                      joystick_1[11] | gun_snac_coin_p2,
-                      joystick_0[11] | gun_snac_coin_p1,
+                      joystick_1[10],
+                      joystick_0[10],
+                      joystick_1[11],
+                      joystick_0[11],
                       test_btn, svc_btn};
-// Alien3 routes only the two cabinet coin switches through SERVICE12: the
-// generic Start fields are physically absent on that gun cabinet. SNAC
-// GunCon B/Cross is the second coin source, matching the Point Blank donor.
-wire [7:0] svc12_alien3 = ~{
-                     2'b00, 2'b00,
-                     joystick_0[11] | gun_snac_coin_p1,
-                     joystick_1[11] | gun_snac_coin_p2,
-                     test_btn, svc_btn};
-wire [7:0] svc12 = active_board.coin_swap ? svc12_alien3 : svc12_generic;
 // Port F/SERVICE34: bits 3:0 = DIP SW1:1-4 (Off), bit4 = PCB Push SW1
 // (Service), bit5 = PCB Push SW2 (Test), bit6 unknown; bit7 is replaced by the
 // EEPROM DO line inside s32_core.  Some games poll the PCB push switches
@@ -808,8 +588,8 @@ wire [7:0] brival_ppi_pb = {~joystick_0[9], 1'b1,
 wire [7:0] darkedge_ppi_pb = {~joystick_0[8], 1'b1,
                               ~joystick_0[6], ~joystick_0[7], 1'b1,
                               ~joystick_1[8], ~joystick_1[7], ~joystick_1[6]};
-wire brival_inputs = active_board.prot_sel == PROT_BRIVAL;
-wire darkedge_inputs = active_board.prot_sel == PROT_DARKEDGE;
+wire brival_inputs = 1'b0;  // Burning Rival protection removed -- other-game hardware
+wire darkedge_inputs = 1'b0;  // Dark Edge protection removed -- other-game hardware
 wire [7:0] core_ppi_pa = (brival_inputs || darkedge_inputs) ? 8'hff :
                           p_dig(joystick_2);
 wire [7:0] core_ppi_pb = brival_inputs ? brival_ppi_pb :
@@ -1048,42 +828,15 @@ end
 // can change the output geometry independently of the native gun coordinates;
 // suppress the crosshair in that optional mode rather than presenting a
 // silently misregistered sight.  The native (default) path is exact.
+// No lightgun overlay: OutRunners has no positional gun input, so the
+// crosshair/border decoration stage (s32_lightgun_overlay) is removed and
+// game_rgb (or the CRT Adjust path) drives VGA directly.
 wire [23:0] video_rgb_pre = crt_adjust_active ? {crt_r, crt_g, crt_b} : game_rgb;
-wire        video_ce_pre  = crt_adjust_active ? crt_rd_ce : ce_pix_core;
-wire        video_hs_pre  = crt_adjust_active ? crt_hs : core_hs;
-wire        video_vs_pre  = crt_adjust_active ? crt_vs : core_vs;
-wire        video_de_pre  = crt_adjust_active ? crt_de_osd : ~(core_hb | core_vb);
-wire [23:0] video_rgb_overlay;
-wire [8:0]  lightgun_raster_x, lightgun_raster_y;
-s32_lightgun_overlay #(.BORDER_WIDTH(4)) lightgun_overlay (
-    .clk          (clk_sys),
-    .rst          (video_reset),
-    .pxl_cen      (video_ce_pre),
-    .hs           (video_hs_pre),
-    .vs           (video_vs_pre),
-    .de           (video_de_pre),
-    .screen_width (lightgun_width),
-    .screen_height(lightgun_height),
-    .gun1_x       (display_gun_p1_x),
-    .gun1_y       (display_gun_p1_y),
-    .gun2_x       (display_gun_p2_x),
-    .gun2_y       (display_gun_p2_y),
-    .gun1_en      (active_board.gun_aim),
-    .gun2_en      (active_board.gun_aim),
-    .border_en    (active_board.gun_aim && status[8]),
-    // status[9] is CRT Adjust in this core, so status[34] is the explicit
-    // crosshair control while retaining the JTFRAME status[8] border meaning.
-    .crosshair_en (active_board.gun_aim && status[34] && !crt_adjust_active),
-    .rgb_in       (video_rgb_pre),
-    .rgb_out      (video_rgb_overlay),
-    .raster_x     (lightgun_raster_x),
-    .raster_y     (lightgun_raster_y)
-);
 
 assign CE_PIXEL = crt_adjust_active ? crt_rd_ce : ce_pix_core;
-assign VGA_R  = video_rgb_overlay[23:16];
-assign VGA_G  = video_rgb_overlay[15:8];
-assign VGA_B  = video_rgb_overlay[7:0];
+assign VGA_R  = video_rgb_pre[23:16];
+assign VGA_G  = video_rgb_pre[15:8];
+assign VGA_B  = video_rgb_pre[7:0];
 assign VGA_HS = crt_adjust_active ? crt_hs : core_hs;
 assign VGA_VS = crt_adjust_active ? crt_vs : core_vs;
 assign VGA_DE = crt_adjust_active ? crt_de_osd : ~(core_hb | core_vb);

@@ -207,8 +207,8 @@ initial begin
 
     board = '0;
     board.multi32     = b0[0];
-    board.has_v25     = b0[1];
-    board.v25_table   = b0[2];
+    // b0[1] (was has_v25) and b0[2] (was v25_table) are reserved: V25/
+    // protection were removed, OutRunners never sets them.
     board.has_adc     = b0[3];
     board.has_ppi     = b0[5];
     board.has_motor_hle = b0[6];
@@ -219,14 +219,14 @@ initial begin
     board.analog_profile = b1[5:4];
     board.dual_comm_ff = b1[6];
     board.comm_link_hle = b2[7];
-    board.prot_sel    = b2[6:0];
+    // b2[6:0] (was prot_sel) is reserved.
     board.sprite_bank_valid = 1'b1;
     board.sprite_bank_mask  = sbm[1:0];
-    $display("[desc] board: multi32=%0d v25=%0d/%0d ga2=%0d adc=%0d ppi=%0d motor=%0d dual=%0d prot=%0d flip_y=%0d gun=%0d coin_swap=%0d analog=%0d sbm=%0d",
-             board.multi32, board.has_v25, board.v25_table,
+    $display("[desc] board: multi32=%0d ga2=%0d adc=%0d ppi=%0d motor=%0d dual=%0d flip_y=%0d gun=%0d coin_swap=%0d analog=%0d sbm=%0d",
+             board.multi32,
              ga2_qualification, board.has_adc, board.has_ppi,
              board.has_motor_hle, board.dual_pcb,
-             board.prot_sel, board.flip_y, board.gun_aim, board.coin_swap,
+             board.flip_y, board.gun_aim, board.coin_swap,
              board.analog_profile,
              board.sprite_bank_mask);
 end

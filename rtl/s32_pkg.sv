@@ -81,14 +81,14 @@ package s32_pkg;
     // ------------------------------------------------------------------
     typedef struct packed {
         logic       multi32;       // V70 dual-screen board
-        logic       has_v25;       // protection MCU present
-        logic       v25_table;     // 0=ga2 table, 1=arf table
+        logic       _reserved0;    // was has_v25 -- OutRunners has no V25 MCU
+        logic       _reserved1;    // was v25_table
         logic       has_adc;       // MSM6253 analog board
         logic       has_ppi;       // i8255 4/6-player board
         logic       has_motor_hle; // Rad Mobile 837-7753 mailbox responder
         logic       dual_pcb;      // reserved descriptor bit; unsupported
-        logic [6:0] prot_sel;      // HLE protection select (PROT_*)
-        logic       comm_link_hle; // descriptor-selected EPR-14084 link HLE
+        logic [6:0] _reserved2;    // was prot_sel -- OutRunners is unprotected
+        logic       comm_link_hle; // descriptor-selected comm-board link HLE
         // Sprite ROMs contain one, two, or four 4 MiB banks.  MAME mirrors
         // the controller's 2-bit bank selection modulo that physical count.
         // Old all-zero descriptors have no valid field and retain four banks.

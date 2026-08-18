@@ -31,17 +31,16 @@ endmodule
 // cache. Keep this preprocessing choice local to this compilation unit.
 // Fixed CE spacing (no CPU Turbo in any supported game) is common to all
 // boards.
-// Keep the V25 implementation internally selectable while exposing only one
-// production profile.
-`ifdef S32_UNIVERSAL
-`define S32_V25_HW
-`endif
+//
+// The V25 MCU and its rtl/prot/ / rtl/cpu/v25/ sources were removed: they are
+// exclusive to Golden Axe: Revenge of Death Adder / Arabian Fight's
+// standard-board revision, which this repository no longer builds.
 
-`ifdef S32_V25_HW
-`define S32_AREA_ROM_CACHE
-`elsif S32_GAME_ONLY_STD
+`ifdef S32_GAME_ONLY_STD
 `define S32_AREA_ROM_CACHE
 `elsif S32_GAME_ONLY
+`define S32_AREA_ROM_CACHE
+`elsif S32_OUTRUNNERS
 `define S32_AREA_ROM_CACHE
 `endif
 
@@ -57,9 +56,6 @@ module s32_core #(
 ) (
     input             clk_sys,      // 48.317307 MHz
     input             clk_ram,      // 96.634615 MHz
-`ifdef S32_V25_HW
-    input             clk_v25,      // ~24.158653 MHz (clk_sys/2): s80x86 compute domain
-`endif
     input             rst,
     // Keep CRT timing alive while game logic is held in ROM-load reset.
     input             video_rst,
@@ -176,7 +172,13 @@ module s32_core #(
 // all supported standard peripherals and the real V25 compiled in. Runtime
 // descriptor bits select the board-specific path; no game-specific QSF is
 // needed. S32_GAME_ONLY_STD implies GAME_ONLY.
-`ifdef S32_UNIVERSAL
+`ifdef S32_OUTRUNNERS
+// One board, one game: take the dedicated-build optimisations (GAME_ONLY ties
+// the protection ROM requester low, so SDRAM p0 has a single client) and the
+// standard-peripheral arm, which is what carries the 837-7536 A/D converter.
+localparam GAME_ONLY     = 1'b1;
+localparam GAME_ONLY_STD = 1'b1;
+`elsif S32_UNIVERSAL
 localparam GAME_ONLY     = 1'b1;
 localparam GAME_ONLY_STD = 1'b1;
 `elsif S32_GAME_ONLY_STD
@@ -190,32 +192,21 @@ localparam GAME_ONLY     = 1'b0;
 localparam GAME_ONLY_STD = 1'b0;
 `endif
 
-// Runtime descriptor fields remain authoritative in the universal profile.
-`ifdef S32_PROFILE_STANDARD
-wire       cfg_multi32           = 1'b0;
-wire       cfg_has_v25           = board.has_v25;
-wire       cfg_v25_table         = board.v25_table;
-wire       cfg_has_adc           = board.has_adc;
-wire       cfg_has_ppi           = board.has_ppi;
-wire       cfg_has_motor_hle     = board.has_motor_hle;
+// This repository builds one board: Sega System Multi 32 (837-8676) running
+// OutRunners.  The configuration is a build constant, not a descriptor field
+// selected at runtime -- Quartus deletes the System 32 arms of every
+// conditional below instead of keeping both and selecting between them.
+// OutRunners is an unprotected board (MAME's init_orunners() installs no
+// protection) with the 837-7536 A/D PCB fitted and no V25, PPI or motor
+// controller.
+wire       cfg_multi32           = 1'b1;
+wire       cfg_has_adc           = 1'b1;
+wire       cfg_has_ppi           = 1'b0;
+wire       cfg_has_motor_hle     = 1'b0;
 wire       cfg_comm_link_hle     = board.comm_link_hle;
-wire [6:0] cfg_prot_sel          = board.prot_sel;
 wire       cfg_sprite_bank_valid = board.sprite_bank_valid;
 wire [1:0] cfg_sprite_bank_mask  = board.sprite_bank_mask;
-wire       cfg_flip_y            = board.flip_y;
-`else
-wire       cfg_multi32           = board.multi32;
-wire       cfg_has_v25           = board.has_v25;
-wire       cfg_v25_table         = board.v25_table;
-wire       cfg_has_adc           = board.has_adc;
-wire       cfg_has_ppi           = board.has_ppi;
-wire       cfg_has_motor_hle     = board.has_motor_hle;
-wire       cfg_comm_link_hle     = board.comm_link_hle;
-wire [6:0] cfg_prot_sel          = board.prot_sel;
-wire       cfg_sprite_bank_valid = board.sprite_bank_valid;
-wire [1:0] cfg_sprite_bank_mask  = board.sprite_bank_mask;
-wire       cfg_flip_y            = board.flip_y;
-`endif
+wire       cfg_flip_y            = 1'b0;
 // A System32-only bitstream must not enter a Multi 32 runtime configuration if
 // it is accidentally paired with a Multi 32 MRA.  The universal source build
 // retains the descriptor-selected path when SYSTEM32_ONLY is false.  GAME_ONLY
@@ -223,7 +214,14 @@ wire       cfg_flip_y            = board.flip_y;
 // force the System 32 configuration even if a QSF sets a game macro without
 // S32_SYSTEM32_ONLY (previously that mismatch left is_multi32 following the
 // descriptor while optional hardware it implies was compiled out).
+// The OutRunners revision is a Multi 32 build by construction and must not be
+// caught by that interlock: it sets GAME_ONLY for the dedicated-build
+// optimisations while genuinely being a two-screen board.
+`ifdef S32_OUTRUNNERS
+wire is_multi32 = 1'b1;
+`else
 wire is_multi32 = (SYSTEM32_ONLY || GAME_ONLY) ? 1'b0 : cfg_multi32;
+`endif
 
 // ---------------------------------------------------------------------------
 // CPU + bus adapter
@@ -356,43 +354,20 @@ wire [15:0] wram_q;
 wire [WRAM_ADDR_WIDTH-1:0] wram_a = SYSTEM32_ONLY ? A[15:1] :
                                     (is_multi32 ? A[16:1] : {1'b0, A[15:1]});
 
-// protection second port
-wire        pr_req, pr_we;
-wire [15:0] pr_addr;
-wire [15:0] pr_wdata;
-wire [1:0]  pr_be;
-wire [15:0] pr_q;
-reg         pr_ack;
-wire        br_pram_we;
-wire [7:0]  br_pram_addr;
-wire [7:0]  br_pram_wdata;
-wire [WRAM_ADDR_WIDTH-1:0] pr_wram_a = pr_addr[WRAM_ADDR_WIDTH-1:0];
-wire        work_pr_we = (pr_req && pr_we) || br_pram_we;
-wire [WRAM_ADDR_WIDTH-1:0] work_pr_addr = br_pram_we
-                                         ? {{(WRAM_ADDR_WIDTH-7){1'b0}},
-                                            br_pram_addr[7:1]}
-                                         : pr_wram_a;
-wire [15:0] work_pr_wdata = br_pram_we
-                           ? (br_pram_addr[0] ? {br_pram_wdata, 8'h00}
-                                              : {8'h00, br_pram_wdata})
-                           : pr_wdata;
-wire [1:0] work_pr_be = br_pram_we
-                      ? (br_pram_addr[0] ? 2'b10 : 2'b01)
-                      : pr_be;
-
+// Work RAM's second port existed only for the standard-board protection
+// responders (Dark Edge / J.League / Burning Rival HLE) and the V25 mailbox.
+// OutRunners uses neither -- MAME's init_orunners() installs no protection --
+// so port B is tied inactive rather than carried as dead arbitration logic.
 s32_big_dpram #(
     .ADDR_WIDTH(WRAM_ADDR_WIDTH), .NUM_WORDS(WRAM_WORDS)
 ) work_ram (
     .clock_a(clk_sys), .address_a(wram_a),
     .data_a(m_wdata), .byteena_a(m_be),
     .wren_a(m_req && m_we && sel_wram), .q_a(wram_q),
-    .clock_b(clk_sys), .address_b(work_pr_addr),
-    .data_b(work_pr_wdata), .byteena_b(work_pr_be),
-    .wren_b(work_pr_we), .q_b(pr_q)
+    .clock_b(clk_sys), .address_b('0),
+    .data_b(16'h0000), .byteena_b(2'b00),
+    .wren_b(1'b0), .q_b()
 );
-
-always @(posedge clk_sys)
-    pr_ack <= pr_req;
 
 
 // ---------------------------------------------------------------------------
@@ -656,14 +631,10 @@ wire [7:0] sprctl_q;
 wire [1:0] disp_buf;
 wire [1:0] spr_scan_buf;
 s32_sprite #(
-`ifdef S32_V25_HW
-    .VERIFY_SROM(1'b1)
-`else
     .VERIFY_SROM(1'b0)
-`endif
 ) sprite (
     .clk(clk_ram), .rst(rst), .is_multi32(is_multi32),
-    .verify_srom(cfg_has_v25 && !cfg_v25_table),
+    .verify_srom(1'b0),  // V25-only sprite-ROM cross-check; no V25 on OutRunners
     // Old MRAs predate bank metadata and therefore retain the original
     // four-bank address space. New descriptors mirror 4/8 MiB ROMs exactly.
     .srom_bank_mask(cfg_sprite_bank_valid ? cfg_sprite_bank_mask : 2'b11),
@@ -1027,16 +998,10 @@ end
 // ---------------------------------------------------------------------------
 wire [7:0] io0_q, io1_q;
 wire [7:0] io0_pc, io0_pd, io0_pg, io0_dir, io1_ph;
-wire [7:0] radm_motor_q;
-wire       radm_motor_sel;
-wire [7:0] io0_pc_in = radm_motor_sel ? radm_motor_q : in_portc;
+// No Rad Mobile moving-controller mailbox on this board (cfg_has_motor_hle is
+// always 0); s32_radm_motor_mailbox was removed.
+wire [7:0] io0_pc_in = in_portc;
 wire       eep_do;
-
-s32_radm_motor_mailbox radm_motor (
-    .clk(clk_sys), .rst(rst), .enable(cfg_has_motor_hle),
-    .address(io0_pg), .data_out(io0_pc), .data_output_en(io0_dir[2]),
-    .strobe_n(io0_pd[4]), .data_in(radm_motor_q), .selected(radm_motor_sel)
-);
 
 s32_io5296 io0 (
     .clk(clk_sys), .rst(rst),
@@ -1118,13 +1083,9 @@ generate
     end
 endgenerate
 
-wire [7:0] ppi_q;
-s32_i8255 ppi (
-    .clk(clk_sys),
-    .cs(m_req && sel_ppi && m_be[0]),
-    .we(m_we), .addr(A[2:1]), .wdata(m_wdata[7:0]), .rdata(ppi_q),
-    .pa(ppi_pa), .pb(ppi_pb), .pc_in(ppi_pc), .pc_out()
-);
+// No PPI on this board (OutRunners never selects the 4/6-player expansion --
+// cfg_has_ppi is always 0, so sel_ppi never fires); s32_i8255 was removed.
+wire [7:0] ppi_q = 8'hff;
 
 // ---------------------------------------------------------------------------
 // interrupt controller
@@ -1141,154 +1102,20 @@ s32_intc intc (
 );
 
 // ---------------------------------------------------------------------------
-// protection
+// protection / V25 -- removed.  OutRunners is unprotected hardware (MAME's
+// init_orunners() installs no protection responder) and Multi 32 has no V25
+// MCU (that chip is exclusive to Golden Axe: Revenge of Death Adder /
+// Arabian Fight's standard-board revision).  SDRAM port 5 (the V25 program
+// fetch port) is tied permanently idle rather than removed from the module
+// interface, so the top-level SDRAM arbiter and s32_core instantiation in
+// Arcade-SegaSystem32.sv need no port-list changes.
 // ---------------------------------------------------------------------------
-wire [7:0]  v25_q;
-wire        dke_pr_req, dke_pr_we;
-wire [15:0] dke_pr_addr, dke_pr_wdata;
-wire [1:0]  dke_pr_be;
-wire        jl_pr_req, jl_pr_we;
-wire [15:0] jl_pr_addr, jl_pr_wdata;
-wire [1:0]  jl_pr_be;
-wire        jl_rom_req, jl_rom_ack;
-wire [20:0] jl_rom_addr;
-wire        br_trap;
-wire [15:0] br_trap_q;
-wire        br_rom_req, br_rom_ack;
-wire [23:0] br_rom_addr;
-wire [15:0] prot_rom_data;
-wire        prot_rom_req;
-wire [20:0] prot_rom_addr;
-wire        prot_rom_ack;
-
-// J.League and Burning Rival are mutually exclusive descriptor-selected
-// protection clients sharing the cache's single protected-ROM lookup port.
-assign prot_rom_req  = jl_rom_req | br_rom_req;
-assign prot_rom_addr = br_rom_req ? br_rom_addr[20:0] : jl_rom_addr;
-assign jl_rom_ack    = prot_rom_ack && !br_rom_req;
-assign br_rom_ack    = prot_rom_ack && br_rom_req;
-
-// The accepted write pulse is deliberately taken from wr_stb rather than
-// raw m_req: the V60 bus holds a write request until ack, while the original
-// write16 handler runs once per accepted transaction.
-wire jl_cpu_write = wr_stb && m_we && sel_wram && m_be[0];
-
-// Descriptor-selected standard-board protection responders.
-generate
-`ifdef S32_UNIVERSAL_DISABLED
-    begin : g_no_generic_prot
-        assign dke_pr_req   = 1'b0;
-        assign dke_pr_we    = 1'b0;
-        assign dke_pr_addr  = 16'h0000;
-        assign dke_pr_wdata = 16'h0000;
-        assign dke_pr_be    = 2'b00;
-        assign jl_pr_req    = 1'b0;
-        assign jl_pr_we     = 1'b0;
-        assign jl_pr_addr   = 16'h0000;
-        assign jl_pr_wdata  = 16'h0000;
-        assign jl_pr_be     = 2'b00;
-        assign jl_rom_req   = 1'b0;
-        assign jl_rom_addr  = 21'h000000;
-    end
-`else
-    begin : g_generic_prot
-        s32_prot_darkedge #(.ENABLE(GAME_ONLY_STD || !GAME_ONLY)) prot (
-            .clk(clk_sys), .rst(rst),
-            .enable(cfg_prot_sel == PROT_DARKEDGE),
-            .vblank(vbl_start),
-            .wram_req(dke_pr_req), .wram_we(dke_pr_we), .wram_addr(dke_pr_addr),
-            .wram_wdata(dke_pr_wdata), .wram_be(dke_pr_be),
-            .wram_rdata(pr_q), .wram_ack(pr_ack)
-        );
-        s32_prot_jleague #(.ENABLE(GAME_ONLY_STD || !GAME_ONLY)) jleague_prot (
-            .clk(clk_sys), .rst(rst),
-            .enable(cfg_prot_sel == PROT_JLEAGUE),
-            .cpu_write(jl_cpu_write), .cpu_addr(A), .cpu_wdata(m_wdata),
-            .rom_req(jl_rom_req), .rom_addr(jl_rom_addr),
-            .rom_data(prot_rom_data), .rom_ack(jl_rom_ack),
-            .wram_req(jl_pr_req), .wram_we(jl_pr_we), .wram_addr(jl_pr_addr),
-            .wram_wdata(jl_pr_wdata), .wram_be(jl_pr_be),
-            .wram_ack(pr_ack)
-        );
-    end
-`endif
-endgenerate
-
-generate
-    if (GAME_ONLY && !GAME_ONLY_STD) begin : g_game_no_brival
-        assign br_trap       = 1'b0;
-        assign br_trap_q     = 16'hffff;
-        assign br_rom_req    = 1'b0;
-        assign br_rom_addr   = 24'h000000;
-        assign br_pram_we    = 1'b0;
-        assign br_pram_addr  = 8'h00;
-        assign br_pram_wdata = 8'h00;
-    end
-    else begin : g_brival
-        s32_prot_brival brival (
-            .clk(clk_sys), .rst(rst),
-            .enable(cfg_prot_sel == PROT_BRIVAL),
-            .cpu_wr(m_req && m_we && sel_prot_a),
-            .cpu_addr(A), .cpu_wdata(m_wdata),
-            .cpu_rd(m_req && !m_we && sel_wram), .cpu_be(m_be),
-            .trap_active(br_trap), .trap_data(br_trap_q),
-            .pram_we(br_pram_we), .pram_addr(br_pram_addr),
-            .pram_wdata(br_pram_wdata),
-            .rom_req(br_rom_req), .rom_addr(br_rom_addr),
-            .rom_data(prot_rom_data), .rom_ack(br_rom_ack)
-        );
-    end
-endgenerate
-
-assign pr_req   = (cfg_prot_sel == PROT_JLEAGUE) ? jl_pr_req   : dke_pr_req;
-assign pr_we    = (cfg_prot_sel == PROT_JLEAGUE) ? jl_pr_we    : dke_pr_we;
-assign pr_addr  = (cfg_prot_sel == PROT_JLEAGUE) ? jl_pr_addr  : dke_pr_addr;
-assign pr_wdata = (cfg_prot_sel == PROT_JLEAGUE) ? jl_pr_wdata : dke_pr_wdata;
-assign pr_be    = (cfg_prot_sel == PROT_JLEAGUE) ? jl_pr_be    : dke_pr_be;
-
-`ifdef S32_V25_HW
-wire [15:3] v25_rom_addr;
-wire        v25_p5_req;
-// V25 program-fetch address to SDRAM port 5.
-
-s32_v25_cpu v25 (
-    .clk_v25(clk_v25),
-    .pause(pause),
-    .clk(clk_sys), .rst(rst), .enable(cfg_has_v25),
-    .table_sel(cfg_v25_table),
-    .prg_wr(v25_prg_wr), .prg_waddr(v25_prg_waddr), .prg_wdata(v25_prg_wdata),
-    .rom_req(v25_p5_req), .rom_addr(v25_rom_addr),
-    .rom_data(sdr_p5_dout), .rom_ack(sdr_p5_ack),
-    .cs(m_req && sel_v25 && cfg_has_v25 && m_be[0]), .we(m_we),
-    .addr(A[11:1]), .wdata(m_wdata[7:0]), .rdata(v25_q)
-);
-`else
-s32_v25 v25 (
-    .clk(clk_sys), .rst(rst), .enable(cfg_has_v25),
-    .table_sel(cfg_v25_table),
-    .prg_wr(v25_prg_wr), .prg_waddr(v25_prg_waddr), .prg_wdata(v25_prg_wdata),
-    .cs(m_req && sel_v25 && cfg_has_v25 && m_be[0]), .we(m_we),
-    .addr(A[11:1]), .wdata(m_wdata[7:0]), .rdata(v25_q)
-);
-`endif
-
-// ---------------------------------------------------------------------------
-
-`ifdef S32_V25_HW
-// Register the V25 request/address before the clk_sys-to-SDRAM bridge.  The
-// cache and SDRAM side tolerate the one-cycle request latency.
-reg        sdr_p5_req_r;
-reg [24:3] sdr_p5_addr_r;
-always @(posedge clk_sys) begin
-    sdr_p5_req_r  <= v25_p5_req;
-    sdr_p5_addr_r <= SDR_MCU_BASE[24:3] + {9'b0, v25_rom_addr};
-end
-assign sdr_p5_req  = sdr_p5_req_r;
-assign sdr_p5_addr = sdr_p5_addr_r;
-`else
+wire        br_trap      = 1'b0;
+wire [15:0] br_trap_q    = 16'hffff;
+wire [7:0]  v25_q        = 8'h00;
 assign sdr_p5_req  = 1'b0;
 assign sdr_p5_addr = '0;
-`endif
+
 
 // V60 ROM fetch via SDRAM p0, through a small I/D cache (perf):
 //   Production profiles use 64 lines x 8 bytes direct-mapped. Hit = 1
@@ -1320,6 +1147,13 @@ assign sdr_p0_addr  = {2'b00, rom_addr_r[21:1]};
 // extra raw clock of lookup latency remains inside the fixed V60 CE interval.
 wire        rom_ready;
 wire [15:0] rom_word_r;
+// No protection subsystem shares this cache's ROM-fetch port anymore (the
+// J.League protection table read client was removed); tie its request side
+// permanently idle. prot_data/prot_ack are cache outputs and stay unused.
+wire        prot_rom_req  = 1'b0;
+wire [20:0] prot_rom_addr = 21'd0;
+wire [15:0] prot_rom_data;
+wire        prot_rom_ack;
 s32_ga_rom_cache ga_rom_cache (
     .clk(clk_sys),
     .rst(rst),
@@ -1347,8 +1181,8 @@ s32_ga_rom_cache ga_rom_cache (
     .rom_ack(sdr_p0_ack)
 );
 `else
-assign prot_rom_data = 16'hffff;
-assign prot_rom_ack = 1'b0;
+wire [15:0] prot_rom_data = 16'hffff;
+wire        prot_rom_ack = 1'b0;
 // Non-production/general fallback.  Its original 32-line geometry is retained
 // deliberately: every production profile selects s32_ga_rom_cache above, and
 // the measured 64-line conflict win/resource evidence applies to that flat,
@@ -1498,13 +1332,10 @@ always @(posedge clk_sys) begin
                 // window (A[15] && A[14:2]==0); the module holds stale rdata
                 // when neither chip-select fires (audit R20 IO-10a).
                 sel_dual:    rmux <= 16'hffff;
-                sel_v25:     if (GAME_ONLY && !GAME_ONLY_STD)
-                                 // Open-bus when this board has no V25 (holo,
-                                 // spidman): MAME leaves 0xA00000 unmapped
-                                 // (audit R20 PF-7).
-                                 rmux <= cfg_has_v25 ? {8'hff, v25_q} : 16'hffff;
-                             else
-                                 rmux <= cfg_has_v25 ? {8'hff, v25_q} : 16'hffff;
+                // 0xA00000-0xAFFFFF (V25/protection window) is open-bus:
+                // OutRunners has neither (MAME leaves this range unmapped,
+                // audit R20 PF-7).
+                sel_v25:     rmux <= 16'hffff;
                 sel_prot_a:  rmux <= 16'hffff;
                 sel_io0:     rmux <= {8'hff, io0_q};
                 sel_io1:     rmux <= {8'hff, io1_q};

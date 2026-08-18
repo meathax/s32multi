@@ -1,6 +1,6 @@
-# Sega System 32 — project file list (System 32 only; no Multi 32 target).
-# s32_multipcm.sv stays listed because S32_SYSTEM32_ONLY folds is_multi32 to a
-# constant and the instance optimises away; removing it reclaims no logic.
+# OutRunners on Sega System Multi 32 (837-8676). Every source below is real
+# hardware on that board or its 837-7536 A/D PCB; no other game's peripherals
+# are compiled in.
 set_global_assignment -name QIP_FILE sys/sys.qip
 set_global_assignment -name SDC_FILE Arcade-SegaSystem32.sdc
 
@@ -10,10 +10,6 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/s32_core.sv
 
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cpu/v60/s32_v60.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cpu/v60/s32_v60_bus.sv
-# The universal segas32 revision adds the real NEC V25 QIP from segas32.qsf
-# alongside the standard-board protection responders. Runtime descriptors
-# select the real V25 for Golden Axe II/Arabian Fight and the HLE fallback for
-# other supported parents.
 
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/s32_big_dpram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/s32_vram.sv
@@ -23,20 +19,16 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/s32_linebuf.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/s32_mixer.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/s32_palette.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/s32_video.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/s32_lightgun_overlay.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/crt_adjust.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio/s32_audio_mix.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio/s32_soundsys.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio/s32_audio_ce.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio/s32_rf5c68.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio/s32_multipcm.sv
 set_global_assignment -name QIP_FILE rtl/audio/T80/T80.qip
 set_global_assignment -name QIP_FILE rtl/audio/jt12/jt12.qip
 
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/io/s32_io.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/io/s32_driving_controls.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/io/s32_lightgun.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/io/s32_guncon_snac.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/mem/sdram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/mem/s32_sdram_write_mux2.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/mem/s32_rom_loader.sv

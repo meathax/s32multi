@@ -1,4 +1,0 @@
-The lab instantiates the repository's existing T80 files in rtl/audio/T80.
-Those files retain Daniel Wallner's BSD-style licence header verbatim. No T80
-source is copied or modified here. New lab RTL is covered by the repository's
-aggregate licence.

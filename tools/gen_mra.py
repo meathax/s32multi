@@ -100,13 +100,26 @@ GAMES = {
     "svf":      desc(),
     "jleague":  desc(prot=PROT["JLEAGUE"]),
     "jleagueo": desc(prot=PROT["JLEAGUE"]),
-    # NO MULTI 32 SETS.  harddunk/orunners/scross/titlef are Multi 32 boards and
-    # this repository builds System 32 only: every shipped revision sets
-    # S32_SYSTEM32_ONLY=1, which folds is_multi32 to a constant and removes the
-    # second palette, the second mixer, the MultiPCM path and half of work RAM.
-    # Emitting MRAs for them advertised games no RBF here can run.  Adding one
-    # back means restoring a Multi 32 revision first, not just a line here --
-    # Multi32ExclusionTests in verif/test_gen_mra.py fails if one reappears.
+    # OutRunners is a Sega System Multi 32 board (837-8676 / 171-6253C): NEC
+    # V70 at 20 MHz, two 315-5388/5242/5296 video+I/O sets driving two JAMMA
+    # edges, one YM3438 and one 315-5560 MultiPCM, and the 837-7536 A/D board.
+    # This repository targets that board, so multi32 is set here and the RTL
+    # no longer folds it to a constant.
+    #
+    # The analog board is an OKI M6253 -- a *four*-channel ADC -- plus a
+    # 74HC4053 bank mux, not an eight-channel converter.  MAME wires ADC
+    # channels 0 and 1 straight to ANALOG1/ANALOG2 and takes only channels 2
+    # and 3 through the bank (segas32.cpp in2_analog_read/in3_analog_read), so
+    # the six OutRunners axes are reached as:
+    #
+    #   ch0 = P1 steering   ch1 = P1 accel
+    #   ch2 = bank0 P1 brake  / bank1 P2 accel
+    #   ch3 = bank0 P2 steer  / bank1 P2 brake
+    #
+    # There is no gear_toggle: OutRunners has discrete shift-up/shift-down
+    # buttons on P1_A/P1_B bits 0-1, not the latched single-input toggle Rad
+    # Rally and Slip Stream use.
+    "orunners": desc(multi32=1, adc=1, analog=ANALOG["DRIVING"]),
 }
 
 # These parents/sets are intentionally no longer part of the production
@@ -190,6 +203,14 @@ BUTTONS = {
         "Accelerate,Brake,Gear Change,-,-,-,Start,Coin,Test,Service",
         "A,B,X,Start,Select,R,L",
     ),
+    # OutRunners drives its pedals and wheel through the A/D board, so the
+    # digital buttons are only the shifter and the in-car music selector:
+    # BUTTON1/2 = shift up/down, BUTTON3 = DJ/music, BUTTON4/5 = track skip
+    # back/forward (segas32.cpp INPUT_PORTS_START(orunners)).
+    "orunners": (
+        "Shift Up,Shift Down,DJ/Music,Music Prev,Music Next,-,Start,Coin,Test,Service",
+        "A,B,X,Y,R,Start,Select,L",
+    ),
     # Arcade Museum's Super Visual Football panel labels the three game
     # buttons Shoot / Pass-A / Pass-B (see the linked machine record at
     # https://www.arcade-museum.com/Videogame/super-visual-football-european-sega-cup).
@@ -209,6 +230,7 @@ BUTTON_COUNTS = {
     "holo": 2,
     "alien3": 2,
     "jpark": 1,
+    "orunners": 5,
     "radm": 4,
     "radr": 3,
     "spidman": 2,

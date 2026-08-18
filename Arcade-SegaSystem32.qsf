@@ -135,22 +135,19 @@ set_global_assignment -name SEED 2
 # and not a hardware change.
 set_global_assignment -name NUM_PARALLEL_PROCESSORS 2
 
-# This repository is single-screen Sega System 32 only; Multi 32 is not a
-# supported target here.  The macro compiles out the second palette / mixer and
-# sizes work RAM to the board-correct 64 KiB so this RBF fits the Cyclone V
-# memory budget.  The Multi 32 arms remain in the RTL because is_multi32 folds
-# to a constant and reclaims no logic -- deleting them buys nothing.  Every
-# revision in this repository must set this macro; Multi32ExclusionTests in
-# verif/test_gen_mra.py keeps the MRA side in step.
-set_global_assignment -name VERILOG_MACRO "S32_SYSTEM32_ONLY=1"
-set_global_assignment -name VERILOG_MACRO "S32_PROFILE_STANDARD=1"
+# This repository targets one board and one game: OutRunners on Sega System
+# Multi 32 (GAME BD 834-9559-02, MAIN BD 837-8676 / 171-6253C, ROM BD
+# 837-9560-02, A/D BD 837-7536).  S32_OUTRUNNERS pins the runtime
+# configuration to that board -- two 315-5296 I/O chips, two 315-5388/5242
+# video paths, one YM3438 plus one 315-5560 MultiPCM, the M6253 analog board
+# -- so Quartus folds the System 32 arms away instead of selecting between
+# them at runtime.
+#
+# S32_SYSTEM32_ONLY is deliberately absent: it compiles out the second palette
+# and mixer and halves work RAM, which is exactly the Multi 32 hardware this
+# core needs.
+set_global_assignment -name VERILOG_MACRO "S32_OUTRUNNERS=1"
 set_global_assignment -name VERILOG_MACRO "S32_PCB_TIMING=1"
-set_global_assignment -name VERILOG_MACRO "S32_UNIVERSAL=1"
-set_global_assignment -name VERILOG_MACRO "S32_V25_HW=1"
-# Universal-profile trim keeps descriptor-gated driving ADC, PPI, Dark Edge
-# protection, and the real V25 path, but no excluded-title peripherals or
-# responders. See rtl/s32_core.sv's GAME_ONLY_STD localparam.
-set_global_assignment -name VERILOG_MACRO "S32_GAME_ONLY_STD=1"
 # 2026-08-06: two independent audits confirmed fp_valid() (rtl/cpu/v60/
 # s32_v60.sv) exactly mirrors MAME's s_Op5CTable/s_Op5FTable dispatch
 # index-for-index, and no known System 32 game (per that RTL's own comment
@@ -164,13 +161,10 @@ set_global_assignment -name VERILOG_MACRO "S32_V60_NO_FP=1"
 # of the production HDL parse (the verification harnesses do not define it).
 set_global_assignment -name VERILOG_MACRO "SYNTHESIS=1"
 
-# All supported standard protection responders remain available; descriptor
-# selection keeps them inactive for games that do not use them.
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/prot/s32_prot.sv
-
-# --- Real V25, descriptor-selected ------------------------------------
-set_global_assignment -name VERILOG_MACRO "S80X86_PSEUDO_286_INT=0"
-set_global_assignment -name QIP_FILE rtl/cpu/v25/v25.qip
+# No protection responders and no V25 MCU: MAME's init_orunners() installs no
+# protection (segas32_common_init() only), and the V25 is exclusive to Golden
+# Axe: Revenge of Death Adder / Arabian Fight's standard-board revision, which
+# is a different game.  rtl/prot/s32_prot.sv and rtl/cpu/v25/ were removed.
 
 #set_global_assignment -name VERILOG_MACRO "MISTER_FB=1"
 

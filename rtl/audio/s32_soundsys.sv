@@ -74,7 +74,6 @@ reg  [7:0]  z_din;
 wire        z_mreq_n, z_iorq_n, z_rd_n, z_wr_n, z_m1_n;
 reg         z_int_n;
 wire        z_wait_n;
-wire        rf_cpu_wait;
 
 `ifdef SIMULATION
 `ifndef S32_REAL_Z80_SIM
@@ -242,69 +241,32 @@ wire [7:0] shz_rd_r = z_addr[0] ? shz_rd16[15:8] : shz_rd16[7:0];
 // PCM chips
 // ---------------------------------------------------------------------------
 wire        pcm_cs = (z_addr[15:13] == 3'b110);   // C000-DFFF
-wire [7:0]  rf_rdata;
-wire signed [15:0] rf_l, rf_r;
 
-// 2026-08-14: reverted to the internal M10K wave RAM.
-//
-// Commit 739eba0 (2026-08-12) moved the RF5C68's 64 KiB wave RAM into an SDRAM
-// aperture purely to reclaim ~64 M10Ks. Every build since has produced ZERO PCM
-// sound effects on real hardware, in every game, while FM music plays normally.
-//
-// Seven separate hypotheses were tested and refuted against the external path:
-// SDRAM byte-mask/DQM generation, the div48 voice-slot guard, the full write
-// datapath (65 wave writes -> 65 SDRAM writes, zero data mismatches through a
-// raw-storage DQM-honouring chip model), byte polarity, the sample ROM/bank
-// path, p4 port arbitration, and the T80 WAIT_n handshake. All are correct in
-// simulation. The fault survives only where simulation cannot reach -- the
-// clk_sys/clk_ram ack crossings and real device timing -- and the failure mode
-// is fail-silent: a single missed p4 read ack wedges wave_rd_req forever and
-// starves the voice engine permanently, which is precisely the symptom.
-//
-// The memory-budget reason for the aperture no longer applies: removing the V60
-// fast instruction-fetch transport freed ~580 ALMs, and the design sits at
-// 479/553 M10Ks, so the 64 blocks this costs still fit. The internal path is
-// single-cycle, needs no WAIT state on the sound Z80 at all, and is the exact
-// configuration that worked on hardware before 739eba0.
-//
-// Prefer known-good silicon behaviour over an unproven optimization. If the
-// aperture is ever revisited, it needs hardware-level evidence (a latched
-// "wave_rd_req high > N cycles" diagnostic), not more simulation.
-s32_rf5c68 #(.EXTERNAL_WAVE_RAM(1'b0)) rf5c68 (
-    .clk(clk), .ce(ce_pcm & ~is_multi32), .rst(rst),
-    .cs(pcm_cs & ~is_multi32 & (z_mem_rd | z_mem_wr)),
-    .we(z_mem_wr),
-    .addr(z_addr[12:0]), .wdata(z_dout), .rdata(rf_rdata),
-    .wave_rd_req(wave_rd_req), .wave_rd_addr(wave_rd_addr),
-    .wave_rd_data(wave_rd_data), .wave_rd_ack(wave_rd_ack),
-    .wave_wr_req(wave_wr_req), .wave_wr_addr(wave_wr_addr),
-    .wave_wr_data(wave_wr_data), .wave_wr_ack(wave_wr_ack),
-    .cpu_wait(rf_cpu_wait),
-    .out_l(rf_l), .out_r(rf_r)
-);
+// RF5C68 removed: the real Multi 32 board carries one 315-5560 MultiPCM at
+// this window and no RF5C68 (confirmed by physical board photos and MAME's
+// device config). rf_cpu_wait and the wave_rd/wave_wr port pair (System 32's
+// external-SDRAM wave-RAM aperture, never used on hardware -- see the removed
+// 2026-08-14 revert note in git history) are tied inactive so the port list
+// and the wait-state OR term above need no change.
+wire        rf_cpu_wait = 1'b0;
+assign wave_rd_req = 1'b0;
+assign wave_rd_addr = 16'h0000;
+assign wave_wr_req = 1'b0;
+assign wave_wr_addr = 16'h0000;
+assign wave_wr_data = 8'h00;
 
 reg [2:0] mpcm_bank_lo, mpcm_bank_hi;
 wire signed [15:0] mp_l, mp_r;
-generate
-    if (SYSTEM32_ONLY) begin : g_no_multipcm
-        assign mpcm_req  = 1'b0;
-        assign mpcm_addr = 22'd0;
-        assign mp_l = 16'sd0;
-        assign mp_r = 16'sd0;
-    end
-    else begin : g_multipcm
-        s32_multipcm multipcm (
-            .clk(clk), .ce(ce_pcm & is_multi32), .rst(rst),
-            .cs(pcm_cs & is_multi32 & (z_mem_rd | z_mem_wr)),
-            .we(z_mem_wr),
-            .addr(z_addr[1:0]), .wdata(z_dout), .rdata(),
-            .rom_req(mpcm_req), .rom_addr(mpcm_addr),
-            .rom_data(mpcm_data), .rom_ack(mpcm_ack),
-            .bank_lo(mpcm_bank_lo), .bank_hi(mpcm_bank_hi),
-            .out_l(mp_l), .out_r(mp_r)
-        );
-    end
-endgenerate
+s32_multipcm multipcm (
+    .clk(clk), .ce(ce_pcm), .rst(rst),
+    .cs(pcm_cs & (z_mem_rd | z_mem_wr)),
+    .we(z_mem_wr),
+    .addr(z_addr[1:0]), .wdata(z_dout), .rdata(),
+    .rom_req(mpcm_req), .rom_addr(mpcm_addr),
+    .rom_data(mpcm_data), .rom_ack(mpcm_ack),
+    .bank_lo(mpcm_bank_lo), .bank_hi(mpcm_bank_hi),
+    .out_l(mp_l), .out_r(mp_r)
+);
 
 // ---------------------------------------------------------------------------
 // FM: 2x jt12 in YM2612/3438 mode (jt12 top: jt12; using jt03-style wrapper).
@@ -316,12 +278,14 @@ endgenerate
 // patched -- forking the vendored core for that cosmetic delta is not sim-verifiable
 // (the sim path uses jt12_stub) and would diverge from the canonical core.
 // ---------------------------------------------------------------------------
-wire [7:0] fm1_dout, fm2_dout;
-wire       fm1_irq_n, fm2_irq_n;
-wire signed [15:0] fm1_l, fm1_r, fm2_l, fm2_r;
+// One YM3438: the real Multi 32 board carries a single YM3438 (physical
+// board photos, MAME device config) -- port 0x90-0x9F is unmapped hardware,
+// not a second FM chip.
+wire [7:0] fm1_dout;
+wire       fm1_irq_n;
+wire signed [15:0] fm1_l, fm1_r;
 
 wire fm1_cs = z_io_rd | z_io_wr ? (z_addr[7:4] == 4'h8) : 1'b0;
-wire fm2_cs = (z_io_rd | z_io_wr) && (z_addr[7:4] == 4'h9) && !is_multi32;
 
 jt12 fm1 (
     .rst(rst), .clk(clk), .cen(ce_fm),
@@ -330,15 +294,6 @@ jt12 fm1 (
     .dout(fm1_dout), .irq_n(fm1_irq_n),
     .en_hifi_pcm(1'b1),
     .snd_left(fm1_l), .snd_right(fm1_r), .snd_sample()
-);
-
-jt12 fm2 (
-    .rst(rst), .clk(clk), .cen(ce_fm),
-    .din(z_dout), .addr(z_addr[1:0]),
-    .cs_n(~fm2_cs), .wr_n(z_wr_n | z_iorq_n),
-    .dout(fm2_dout), .irq_n(fm2_irq_n),
-    .en_hifi_pcm(1'b1),
-    .snd_left(fm2_l), .snd_right(fm2_r), .snd_sample()
 );
 
 // ---------------------------------------------------------------------------
@@ -443,18 +398,16 @@ always @(*) begin
     else if (z_io_rd) begin
         casez (z_addr[7:0])
             8'h8?: z_din = fm1_dout;
-            8'h9?: z_din = is_multi32 ? 8'hff : fm2_dout;
+            8'h9?: z_din = 8'hff;  // unmapped: only one YM3438 on this board
             8'hf1: z_din = sound_dummy_value;
             default: z_din = 8'hff;
         endcase
     end
     else if (z_mem_rd) begin
         if (z_addr[15:13] == 3'b111)      z_din = shz_rd_r;
-        // RF5C68 registers (0xC000-0xCFFF) are write-only; the sound map has no
-        // unmap_value_high, so reads there return 0x00 in MAME, not 0xFF (audit
-        // R20 AU-7).  The wave-RAM window (0xD000-0xDFFF, A12=1) still reads RAM.
-        else if (pcm_cs)                  z_din = is_multi32 ? 8'h00 :
-                                                  (z_addr[12] ? rf_rdata : 8'h00);
+        // multipcm_device::read() always returns 0x00 in MAME -- the real
+        // 315-5560 register window is write-only.
+        else if (pcm_cs)                  z_din = 8'h00;
         else                              z_din = rom_byte_addr[0] ? rom_word[15:8] : rom_word[7:0];
     end
     else z_din = 8'hff;
@@ -465,10 +418,7 @@ end
 // full-scale legal samples cannot wrap around and reverse polarity.
 // ---------------------------------------------------------------------------
 s32_audio_mix output_mixer (
-    .is_multi32(is_multi32),
     .fm1_l(fm1_l), .fm1_r(fm1_r),
-    .fm2_l(fm2_l), .fm2_r(fm2_r),
-    .rf_l(rf_l),   .rf_r(rf_r),
     .mp_l(mp_l),   .mp_r(mp_r),
     .audio_l(audio_l), .audio_r(audio_r)
 );

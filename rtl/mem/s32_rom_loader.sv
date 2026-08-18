@@ -11,6 +11,12 @@
 //  avoiding a duplicate 64 KiB on-chip ROM that cannot fit alongside the real
 //  V25. The inverse of MAME's destination-to-source address lookup is applied
 //  (see v25_stream_to_dst below and DESIGN.md §8.1).
+//  This repository's only supported set (OutRunners) has no V25, so
+//  tools/gen_mra.py never emits an index-8 MCU stream and this slot's
+//  consumption logic never fires. It is left in place -- pure address
+//  arithmetic, no RAM or logic cost -- rather than renumbering OFF_MCU/
+//  OFF_SPRITES and the generator's stream-offset contract for no resource
+//  gain.
 //  Optimized MRAs use index 4 main, 5 sound, 6 tiles, 7 PCM, 8 MCU and
 //  9 sprites. A descriptor-only index-0 transfer is emitted last so reset is
 //  released only after all populated regions have completed.
@@ -191,13 +197,13 @@ always @(posedge clk) begin
                         end
                         if (ioctl_addr == OFF_MAINCPU-27'd2) begin
                             desc_r.multi32     <= desc_bytes[0][0];
-                            desc_r.has_v25     <= desc_bytes[0][1];
-                            desc_r.v25_table   <= desc_bytes[0][2];
+                            // bit 1 was has_v25 (V25 MCU) -- OutRunners has none, byte kept reserved
+                            // bit 2 was v25_table -- unused now
                             desc_r.has_adc     <= desc_bytes[0][3];
                             desc_r.has_ppi     <= desc_bytes[0][5];
                             desc_r.has_motor_hle <= desc_bytes[0][6];
                             desc_r.dual_pcb    <= desc_bytes[1][0];
-                            desc_r.prot_sel    <= desc_bytes[2][6:0];
+                            // byte 2 bits 6:0 were prot_sel -- OutRunners is unprotected
                             desc_r.sprite_bank_valid <= desc_bytes[3][7];
                             desc_r.sprite_bank_mask  <= desc_bytes[3][1:0];
                             desc_r.flip_y            <= desc_bytes[1][1];
@@ -243,13 +249,13 @@ always @(posedge clk) begin
                         if (ioctl_addr[26:4] == 0) desc_bytes[ioctl_addr[3:0]] <= ioctl_dout[7:0];
                         if (ioctl_addr == OFF_MAINCPU-1) begin
                             desc_r.multi32     <= desc_bytes[0][0];
-                            desc_r.has_v25     <= desc_bytes[0][1];
-                            desc_r.v25_table   <= desc_bytes[0][2];
+                            // bit 1 was has_v25 (V25 MCU) -- OutRunners has none, byte kept reserved
+                            // bit 2 was v25_table -- unused now
                             desc_r.has_adc     <= desc_bytes[0][3];
                             desc_r.has_ppi     <= desc_bytes[0][5];
                             desc_r.has_motor_hle <= desc_bytes[0][6];
                             desc_r.dual_pcb    <= desc_bytes[1][0];
-                            desc_r.prot_sel    <= desc_bytes[2][6:0];
+                            // byte 2 bits 6:0 were prot_sel -- OutRunners is unprotected
                             desc_r.sprite_bank_valid <= desc_bytes[3][7];
                             desc_r.sprite_bank_mask  <= desc_bytes[3][1:0];
                             desc_r.flip_y            <= desc_bytes[1][1];
