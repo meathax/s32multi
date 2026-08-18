@@ -283,7 +283,13 @@ s32_v60_exec_cadence v60_cadence (
     .clk(clk_sys), .rst(rst), .pause(pause), .ce(v60_exec_ce)
 );
 
-s32_v60 #(.START_PC(32'hFFFFFFF0), .FAST_IFETCH(`FAST_IFETCH_EN)) v60 (   // MAME reset PC (audit R20 V60-21)
+// IS_V70=1: the real chip is a NEC D70632R-20 (V70), confirmed by physical
+// board marking and MAME device config, not a V60. The only functional
+// effect today is the processor ID register (PIR = 0x7000, not 0x6000) --
+// s32_v60_bus's external bus stays 16-bit regardless of this parameter (see
+// that file's header); OutRunners has been verified booting on that 16-bit
+// adapter, so a true 32-bit V70 bus is deferred pending evidence it's needed.
+s32_v60 #(.START_PC(32'hFFFFFFF0), .FAST_IFETCH(`FAST_IFETCH_EN), .IS_V70(1'b1)) v60 (   // MAME reset PC (audit R20 V60-21)
     .clk(clk_sys), .ce(v60_exec_ce), .rst(rst),
     .fast_ifetch(fast_v60),
     .if_req(if_req), .if_addr(if_addr), .if_data(if_data), .if_ack(if_ack),
@@ -1010,9 +1016,11 @@ s32_io5296 io0 (
     .in_pa(in_p1a), .in_pb(in_p2a),
     .in_pc(io0_pc_in),                         // RadM: bidirectional moving-board bus
     .in_pe(in_svc12),
-    // System 32 EEPROM DO on SERVICE34_A bit 7; Multi 32 reads it on io1 instead
-    // (see io1 below), so don't force eep_do onto io0 bit 7 in Multi 32.
-    .in_pf(is_multi32 ? in_svc34 : {eep_do, in_svc34[6:0]}),
+    // MAME wires DO to bit 7 of BOTH SERVICE34_A and SERVICE34_B on Multi 32
+    // (segas32.cpp INPUT_PORTS_START(system32_generic)'s SERVICE34_A base
+    // definition is inherited unmodified by multi32_generic, and
+    // SERVICE34_B carries its own identical do_read bit) -- not io1 only.
+    .in_pf({eep_do, in_svc34[6:0]}),
     .out_pc(io0_pc), .out_pd(io0_pd), .out_pg(io0_pg), .out_ph(io0_ph),
     .dir_out(io0_dir),
     .cnt0(), .cnt1(io0_cnt1), .cnt2(io0_cnt2)
@@ -1027,14 +1035,14 @@ s32_io5296 io1 (
     // Multi 32 EEPROM DO is read on the SECOND I/O chip's SERVICE34_B bit 7
     // (MAME io_chip_1.in_pf = SERVICE34_B, do_read on bit 7); previously io1 got
     // constant 0xff there, so Multi 32 NVRAM boot never converged (audit R23-F1).
-    .in_pe(in_svc12_b), .in_pf(is_multi32 ? {eep_do, in_svc34_b[6:0]} : in_svc34_b),
+    .in_pe(in_svc12_b), .in_pf({eep_do, in_svc34_b[6:0]}),
     .out_pc(), .out_pd(), .out_pg(), .out_ph(io1_ph), .dir_out(),
     // cnt1 = screen-B display enable (MAME io_chip_1 out_cnt1 -> display_enable_w<1>).
     .cnt0(), .cnt1(io1_cnt1), .cnt2()
 );
 
-// EEPROM wiring: S32 = io0 port D bits {7=DI,5=CS,6=CLK}; M32 = io1 port H
-wire [7:0] eep_src = is_multi32 ? io1_ph : io0_pd;
+// EEPROM wiring: Multi 32 reads it on io1 port H.
+wire [7:0] eep_src = io1_ph;
 s32_eeprom93c46 eeprom (
     .clk(clk_sys), .rst(rst),
     .di(eep_src[7]), .cs(eep_src[5]), .sk(eep_src[6]), .dout(eep_do),

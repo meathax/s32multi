@@ -305,7 +305,7 @@ end
 
 s32_audio_ce audio_ce(
     .clk(clk_sys), .reset(reset), .pll_locked(pll_locked),
-    .is_multi32(is_multi32), .ce_z80(ce_z80), .ce_fm(ce_fm), .ce_pcm(ce_pcm)
+    .ce_z80(ce_z80), .ce_fm(ce_fm), .ce_pcm(ce_pcm)
 );
 
 ///////////////////////////////   HPS IO   ////////////////////////////////////
