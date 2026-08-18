@@ -58,6 +58,7 @@ reg  [8:0]  lb_wx = 0;
 reg  [13:0] lb_wpix = 0;
 reg         lb_bank = 0;
 reg         rst = 1;
+reg         frame_latch = 1'b0;
 wire [23:0] rgb;
 wire [13:0] px_text, px_nbg0, px_nbg1, px_nbg2, px_nbg3, px_bmp;
 
@@ -75,7 +76,7 @@ s32_mixer mix (
     .reg_we(reg_we), .reg_addr(reg_addr), .reg_wdata(reg_wdata), .reg_be(2'b11),
     .reg_rdata(), .reg_raddr(6'h0), .reg_r4e(),
     .disp_x(disp_x), .disp_y(disp_y), .disp_active(1'b1), .display_en(1'b1),
-    .flip_y(1'b0), .layer_off(6'b000000), .bg_ctrl(16'h0000),
+    .flip_y(1'b0), .frame_latch(frame_latch), .layer_off(6'b000000), .bg_ctrl(16'h0000),
     .px_text(px_text), .px_nbg0(px_nbg0), .px_nbg1(px_nbg1),
     .px_nbg2(px_nbg2), .px_nbg3(px_nbg3), .px_bmp(px_bmp),
     .spr_pix(16'hffff),
@@ -137,6 +138,16 @@ initial begin
     repeat (4) @(posedge clk_ram);
     rst = 0;
     repeat (2) @(posedge clk_ram);
+
+    // coloroffs_bank0/1 only latch from mreg on a frame_latch pulse and
+    // reset to -1 per channel (s32_mixer.sv's own uninitialized-register
+    // model); zero the offset regs and pulse once so this test's expected
+    // full-scale colors (ffffff/0000ff) aren't silently darkened by one step.
+    wreg(6'h1f, 16'h0000);
+    wreg(6'h20, 16'h0000); wreg(6'h21, 16'h0000); wreg(6'h22, 16'h0000);
+    wreg(6'h23, 16'h0000); wreg(6'h24, 16'h0000); wreg(6'h25, 16'h0000);
+    @(posedge clk_ram); frame_latch = 1'b1;
+    @(posedge clk_ram); frame_latch = 1'b0;
 
     // palette: [1] = white, [2] = blue-only, [0] = black backdrop
     wpal(15'h0000, 16'h0000);

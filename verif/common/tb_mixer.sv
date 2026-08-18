@@ -63,12 +63,14 @@ s32_linebuf lbuf (
     .px_nbg2(px_nbg2), .px_nbg3(px_nbg3), .px_bmp(px_bmp)
 );
 
+reg frame_latch = 1'b0;
+
 s32_mixer mix (
     .clk(clk_ram), .rst(rst),
     .reg_we(reg_we), .reg_addr(reg_addr), .reg_wdata(reg_wdata), .reg_be(reg_be),
     .reg_rdata(), .reg_raddr(6'h0), .reg_r4e(),
     .disp_x(disp_x), .disp_y(disp_y), .disp_active(1'b1), .display_en(1'b1),
-    .flip_y(1'b0),
+    .flip_y(1'b0), .frame_latch(frame_latch),
     .layer_off(layer_off), .bg_ctrl(bg_ctrl),
     .px_text(px_text), .px_nbg0(px_nbg0), .px_nbg1(px_nbg1),
     .px_nbg2(px_nbg2), .px_nbg3(px_nbg3), .px_bmp(px_bmp),
@@ -80,6 +82,17 @@ s32_mixer mix (
 task wreg(input [5:0] a, input [15:0] d);
     @(posedge clk_ram); reg_we <= 1; reg_addr <= a; reg_wdata <= d;
     @(posedge clk_ram); reg_we <= 0;
+endtask
+// s32_mixer's color-offset select ($3E), per-layer offset flags and both
+// offset banks are whole-frame quantities: the DUT only samples the live
+// mreg values into coloroffs_bank0/1 (and the r3e_f/r4c15_f/
+// layer_color_flags_f snapshot) on a frame_latch pulse at vblank -- and
+// resets to 18'hFFFFF (i.e. -1 per 6-bit channel), not zero. Every directed
+// wreg() to 0x1f/0x19/0x1a/0x20-0x25 in this file must be followed by a
+// pulse here before the new values are visible to a pixel check.
+task pulse_frame_latch;
+    @(posedge clk_ram); frame_latch <= 1'b1;
+    @(posedge clk_ram); frame_latch <= 1'b0;
 endtask
 task wreg_lanes(input [5:0] a, input [15:0] d, input [1:0] lanes);
     @(negedge clk_ram);
@@ -181,6 +194,7 @@ initial begin
     wreg(6'h23, 16'h0000);
     wreg(6'h24, 16'h0000);
     wreg(6'h25, 16'h0000);
+    pulse_frame_latch();
     wreg(6'h2f, 16'h0000);             // mixer $5E must not drive backdrop
 
     // line buffers (bank 0, line 0): NBG0 pen 1 at x=10; NBG1 pen 2 at x=10
@@ -251,7 +265,7 @@ initial begin
     px(9'd10);                         // NBG0 pen1 -> white (31<<3 = F8)
     check(rgb, 24'hFFFFFF, 9'd10);
     px(9'd12);                         // NBG1 pen2 -> palette[2]=B=8 -> B 8<<3=40
-    check(rgb, 24'h000040, 9'd12);
+    check(rgb, 24'h000042, 9'd12);
     px(9'd14);                         // NBG0 idx 0x21 -> R=15 -> 78,0,0
     check(rgb, 24'h7B0000, 9'd14);
 
@@ -279,7 +293,7 @@ initial begin
     wreg(6'h15, 16'h0001);
     wlb(3'd5, 1'b0, 9'd24, 14'h2002);
     px(9'd24);
-    check(rgb, 24'h000040, 9'd24);     // bitmap blue, not fallback green
+    check(rgb, 24'h000042, 9'd24);     // bitmap blue, not fallback green
     wlb(3'd5, 1'b0, 9'd24, 14'h0000);
     wreg(6'h15, 16'h0000);
 
@@ -334,7 +348,7 @@ initial begin
     wreg(6'h19, 16'h0000);
     wreg(6'h1a, 16'h2000);             // NBG1 blends with background
     px(9'd24);
-    check(rgb, 24'h387B00, 9'd24);     // green + red backdrop
+    check(rgb, 24'h397B00, 9'd24);     // green + red backdrop
     wreg(6'h1a, 16'h0000);
     wreg(6'h27, 16'h0000);
     bg_ctrl = 16'h0000;
@@ -410,18 +424,23 @@ initial begin
 
     // mode 00 -> bank !layerflag
     wreg(6'h1f, 16'h0000); wreg(6'h19, 16'h0000);
-    px(9'd22); check(rgb, 24'h7B7068, 9'd22);
+    pulse_frame_latch();
+    px(9'd22); check(rgb, 24'h7B736B, 9'd22);
     wreg(6'h19, 16'h4000);
+    pulse_frame_latch();
     px(9'd22); check(rgb, 24'h8C949C, 9'd22);
 
     // mode 01 -> bank 2 (no offset), independent of layerflag
     wreg(6'h1f, 16'h0002); wreg(6'h19, 16'h0000);
+    pulse_frame_latch();
     px(9'd22); check(rgb, 24'h848484, 9'd22);
 
     // mode 10 -> flag 0 selects bank 2; flag 1 selects bank 0
     wreg(6'h1f, 16'h8000); wreg(6'h19, 16'h0000);
+    pulse_frame_latch();
     px(9'd22); check(rgb, 24'h848484, 9'd22);
     wreg(6'h19, 16'h4000);
+    pulse_frame_latch();
     px(9'd22); check(rgb, 24'h8C949C, 9'd22);
 
     // --- 8: signed offsets occur before blending; second lookup is distinct ---
@@ -434,9 +453,10 @@ initial begin
     wreg(6'h1f, 16'h0000);
     wreg(6'h19, 16'h0100);             // NBG0 flag0(bank1), blend NBG1
     wreg(6'h1a, 16'h4000);             // NBG1 flag1(bank0)
+    pulse_frame_latch();
     wreg(6'h27, 16'h0800);             // blend enable, factor 0
     px(9'd10);
-    check(rgb, 24'h181820, 9'd10);
+    check(rgb, 24'h181821, 9'd10);
 
     wreg(6'h20, 16'h0001); wreg(6'h21, 16'h0002); wreg(6'h22, 16'h0003);
     wreg(6'h23, 16'h003f); wreg(6'h24, 16'h003e); wreg(6'h25, 16'h003d);
@@ -444,8 +464,10 @@ initial begin
 
     // mode 11 -> bank !layerflag, like mode 00
     wreg(6'h1f, 16'h8002); wreg(6'h19, 16'h0000);
-    px(9'd22); check(rgb, 24'h7B7068, 9'd22);
+    pulse_frame_latch();
+    px(9'd22); check(rgb, 24'h7B736B, 9'd22);
     wreg(6'h19, 16'h4000);
+    pulse_frame_latch();
     px(9'd22); check(rgb, 24'h8C949C, 9'd22);
 
     // --- 10: positional-gun board mixer config (MAME segas32_v.cpp mixer dump:
@@ -456,11 +478,13 @@ initial begin
     wreg(6'h20, 16'hFFEB); wreg(6'h21, 16'hFFEB); wreg(6'h22, 16'hFFEB);
     wreg(6'h23, 16'h0000); wreg(6'h24, 16'h0000); wreg(6'h25, 16'h0000);
     wreg(6'h1f, 16'h0000);             // mode 00: bank = !layerflag
+    pulse_frame_latch();
     wreg(6'h27, 16'h0000);             // blend off first
     wreg(6'h19, 16'h4000);             // NBG0 flag=1 -> bank 0 (-21)
     wreg(6'h1a, 16'h0000);
+    pulse_frame_latch();               // mreg[0x19][14] feeds layer_color_flags
     px(9'd10);                          // white (31,31,31) - 21 = (10,10,10)
-    check(rgb, 24'h505050, 9'd10);
+    check(rgb, 24'h525252, 9'd10);
     px(9'd22);                          // grey (16,16,16) - 21 clamps to 0
     check(rgb, 24'h000000, 9'd22);
     // Positional-gun board blend: 0x4E=0x0C00 (enable, factor 4). Winner NBG0 darkened by
@@ -469,6 +493,7 @@ initial begin
     wpal(15'h0002, 16'h7FFF);
     wreg(6'h27, 16'h0C00);
     wreg(6'h19, 16'h4100);             // bank 0 + blendmask NBG1
+    pulse_frame_latch();
     px(9'd10);
     check(rgb, 24'hBDBDBD, 9'd10);
 
@@ -481,7 +506,7 @@ initial begin
     wreg(6'h00, 16'h000F);
     spr_pix = 16'h07FE;
     px(9'd10);
-    check(rgb, 24'h585858, 9'd10);
+    check(rgb, 24'h5A5A5A, 9'd10);
     spr_pix = 16'hffff;
 
     wreg(6'h27, 16'h0000);

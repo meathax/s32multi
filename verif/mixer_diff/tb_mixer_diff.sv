@@ -20,6 +20,7 @@ reg reg_we = 0;
 reg [5:0] reg_addr = 0;
 reg [15:0] reg_wdata = 0;
 reg [1:0] reg_be = 0;
+reg frame_latch = 1'b0;
 wire [13:0] pal_addr;
 reg [15:0] pal_data = 0;
 wire [23:0] rgb;
@@ -29,7 +30,8 @@ s32_mixer dut (
     .reg_we(reg_we), .reg_addr(reg_addr), .reg_wdata(reg_wdata), .reg_be(reg_be),
     .reg_rdata(), .reg_raddr(6'd0), .reg_r4e(),
     .disp_x(disp_x), .disp_y(disp_y), .disp_active(1'b1),
-    .display_en(1'b1), .flip_y(1'b0), .layer_off(layer_off), .bg_ctrl(bg_ctrl),
+    .display_en(1'b1), .flip_y(1'b0), .frame_latch(frame_latch),
+    .layer_off(layer_off), .bg_ctrl(bg_ctrl),
     .px_text(px[0]), .px_nbg0(px[1]), .px_nbg1(px[2]),
     .px_nbg2(px[3]), .px_nbg3(px[4]), .px_bmp(px[5]),
     .spr_pix(spr_pix), .pal_addr(pal_addr), .pal_data(pal_data), .rgb(rgb)
@@ -167,6 +169,18 @@ initial begin
             @(negedge clk);
             reg_we = 1'b0;
             reg_be = 2'b00;
+            // s32_mixer's color-offset select ($3E) and both offset banks
+            // are whole-frame quantities: coloroffs_bank0/1 (and r3e_f/
+            // r4c15_f/layer_color_flags_f) only latch from the live mreg
+            // array on a frame_latch pulse. unpack_vector() pokes mreg
+            // directly per vector, so without a pulse here they stay frozen
+            // at whatever the previous vector (or the power-up 0xFFFF
+            // uninitialized-register model) left them at, while the Python
+            // reference model in verif/reference/s32_mixer_ref.py reads the
+            // vector's regs fresh every time -- a near-total mismatch, not
+            // an edge case.
+            @(posedge clk); frame_latch = 1'b1;
+            @(posedge clk); frame_latch = 1'b0;
             toggle_x = ~toggle_x;
             disp_x = toggle_x ? 9'd510 : 9'd511;
             repeat (16) @(posedge clk);
