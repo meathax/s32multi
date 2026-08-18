@@ -16,6 +16,22 @@
 //    - shadow = sprite shadow sources halve final RGB after blending
 //  Two palette lookups per pixel are time-multiplexed on the single mixer
 //  palette port (a pixel period is ~15 clk_ram; each lookup needs ~5).
+//
+//  315-5242/M71064 cross-check (Furrtek SiliconRE, silicon-traced): the DAC
+//  stays 5-bit end to end (ROUT/GOUT/BOUT, no on-chip expansion), confirming
+//  expand5() below is correctly a transport-only conversion for MiSTer/HDMI,
+//  not a hardware behaviour to model. Shadow/blank on real silicon is
+//  output-enable gating into an analog resistor network (BEXU/BUBU signals),
+//  not a digital halving; MAME's `>>1` shadow model is a software
+//  abstraction of that already validated against real hardware over decades,
+//  and is kept here rather than guessing at undocumented resistor values.
+//  OPEN: SiliconRE issue #14 raises a physical-trace concern that the R/G
+//  DAC output pins may be swapped relative to the schematic's labels. That
+//  is a board-to-connector question the M71064 Verilog itself cannot answer
+//  (its internal R/G naming is self-consistent either way) and MAME's
+//  channel order -- which this mixer follows -- is the higher-confidence
+//  source absent a real-hardware bring-up test. Left as a flagged risk for
+//  hardware verification, not changed speculatively.
 //============================================================================
 
 module s32_mixer (
