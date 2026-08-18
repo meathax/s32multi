@@ -61,6 +61,9 @@ module s32_core #(
     input             video_rst,
 
     input  board_desc_t board,
+    // MiSTer status[6]: which Multi 32 screen currently drives the physical
+    // output. Selects which DDR3 sprite buffer half is fetched for scanout.
+    input              screen_sel,
 
     // clock enables (from fractional CE generators in emu top)
     input             ce_cpu,       // 16.108 / 20 MHz physical V60/V70 bus
@@ -640,6 +643,7 @@ s32_sprite #(
     .VERIFY_SROM(1'b0)
 ) sprite (
     .clk(clk_ram), .rst(rst), .is_multi32(is_multi32),
+    .screen_sel(screen_sel),
     .verify_srom(1'b0),  // V25-only sprite-ROM cross-check; no V25 on OutRunners
     // Old MRAs predate bank metadata and therefore retain the original
     // four-bank address space. New descriptors mirror 4/8 MiB ROMs exactly.
@@ -722,9 +726,13 @@ assign fb_rd_y   = fb_rd_y_r;
 assign fb_rd_x   = hcnt;
 
 // mixers + palettes
-// Screen B sprite line: per-monitor framebuffer fetch is a tracked deeper
-// item; v1 shares screen A's fetched line so B's tilemaps/palette/mixer are
-// nonetheless fully independent (the valuable part of B7).
+// Both mixers read the same fetched sprite line. That is correct, not a
+// shortcut: MiSTer shows one Multi 32 screen at a time (status[6],
+// screen_sel), and the sprite engine's scan_buf now selects that screen's
+// DDR3 buffer half (s32_sprite.sv screen_sel), so fb_rd_pix already holds
+// the displayed screen's line. The hidden screen's mixer runs on the same
+// data and is simply never looked at -- rgb_a/rgb_b are muxed by status[6]
+// in Arcade-SegaSystem32.sv.
 wire [15:0] fb_rd_pix_b = fb_rd_pix;
 `ifdef S32_UNIVERSAL_DISABLED
 `define S32_MIX_PIX_PIPE

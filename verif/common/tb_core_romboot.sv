@@ -641,6 +641,9 @@ s32_core core (
     .clk_v25(clk_v25),
 `endif
     .rst(rst), .video_rst(rst), .board(board),
+    // TODO(Phase 5 differential verify): wire a +SCREENB plusarg here to
+    // exercise screen B's fetch path; screen A is the harness default.
+    .screen_sel(1'b0),
     .ce_cpu(ce_cpu), .ce_z80(ce_z80), .ce_fm(ce_fm), .ce_pcm(ce_pcm), .pause(1'b0),
     .fast_v60(test_fast_v60),
     .sdr_p0_req(p0_req), .sdr_p0_burst(p0_burst), .sdr_p0_addr(p0_addr),

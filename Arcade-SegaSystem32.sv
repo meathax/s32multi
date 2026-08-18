@@ -632,6 +632,7 @@ s32_core core (
 `endif
     .rst(reset), .video_rst(video_reset),
     .board(active_board),
+    .screen_sel(status[6]),
     .ce_cpu(ce_cpu), .ce_z80(ce_z80), .ce_fm(ce_fm), .ce_pcm(ce_pcm),
     // The production profile has no debug/screenshot pause control. Keep the
     // core port constant so standalone verification benches can still test

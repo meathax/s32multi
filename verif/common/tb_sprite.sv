@@ -93,7 +93,7 @@ reg [1:0] srom_bank_mask = 2'b11;
 wire rendering;
 
 s32_sprite #(.POST_VBLANK_CYCLES(4), .FAST_1X(DUT_FAST_1X)) dut (
-    .clk(clk), .rst(rst), .is_multi32(is_multi32),
+    .clk(clk), .rst(rst), .is_multi32(is_multi32), .screen_sel(1'b0),
     .present(1'b0),
     .verify_srom(1'b0),
     .srom_bank_mask(srom_bank_mask),

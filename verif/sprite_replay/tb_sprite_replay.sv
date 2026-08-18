@@ -72,7 +72,7 @@ always @(posedge clk) begin
 end
 
 s32_sprite #(.VERIFY_SROM(1'b1)) dut (
-    .clk(clk), .rst(rst), .is_multi32(1'b0),
+    .clk(clk), .rst(rst), .is_multi32(1'b0), .screen_sel(1'b0),
     .present(1'b0),
     .verify_srom(1'b1),
     .srom_bank_mask(sprite_bank_mask[1:0]),

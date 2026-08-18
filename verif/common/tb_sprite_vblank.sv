@@ -57,7 +57,7 @@ reg       ctl_we = 0;
 
 // Small post-vblank delay keeps the sim short; behaviour is delay-independent.
 s32_sprite #(.POST_VBLANK_CYCLES(8)) sprite (
-    .clk(clk), .rst(rst), .is_multi32(1'b0),
+    .clk(clk), .rst(rst), .is_multi32(1'b0), .screen_sel(1'b0),
     .present(present),
     .verify_srom(1'b0),
     .srom_bank_mask(2'b11),

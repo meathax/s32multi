@@ -23,6 +23,11 @@ module s32_sprite #(
     input             clk,          // clk_ram
     input             rst,
     input             is_multi32,
+    // Which screen's DDR3 buffer to fetch for scanout (MiSTer status[6]):
+    // MAME independently renders both, but only one drives the physical
+    // output at a time, so a single fetch lane for the displayed screen is
+    // sufficient. 0 = screen A, 1 = screen B.
+    input             screen_sel,
     input       [1:0] srom_bank_mask,
 
     // frame control
@@ -405,7 +410,7 @@ always @(posedge clk) begin
             disp_buf <= {1'b0, ~disp_buf[0]}; // bit0 is the sole A/B selector
             publish_on_done <= 1'b1;
             if (is_multi32)
-                scan_buf <= {1'b0, ~disp_buf[0]};
+                scan_buf <= {screen_sel, ~disp_buf[0]};
             else begin
                 work_buf <= next_work;
                 erase_buf_sel <= next_work;

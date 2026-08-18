@@ -49,7 +49,7 @@ wire        rendering;
 reg vblank = 0;
 reg present = 0;
 s32_sprite sprite (
-    .clk(clk), .rst(rst), .is_multi32(1'b0),
+    .clk(clk), .rst(rst), .is_multi32(1'b0), .screen_sel(1'b0),
     .present(present),
     .verify_srom(1'b0),
     .srom_bank_mask(2'b11),
