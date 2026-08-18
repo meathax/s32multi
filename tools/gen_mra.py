@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """
-MRA generator for the Sega System 32 MiSTer core.
+MRA generator for the OutRunners-only Sega System Multi 32 MiSTer core.
 
-System 32 only: no Multi 32 set is emitted (see the note on GAMES below).
+This repository's RTL builds a single production profile: OutRunners
+(837-8676 / 171-6253C). The only supported parent is "orunners"; its clones
+"orunnersu" (US) and "orunnersj" (Japan) are derived automatically from the
+MAME GAME macro's parent field.
 
 Parses MAME's segas32.cpp (ROM_START blocks + GAME macros) and emits one
 .mra per supported set using independent download regions:
@@ -40,14 +43,13 @@ REGION_INDEX = dict(zip(STREAM_ORDER, range(4, 10)))
 
 # board descriptor per parent (DESIGN.md §3.4):
 #   b0: flags {multi32,v25,v25table,adc,reserved,ppi,motor_hle}
-#       multi32 is retained because the RTL still parses the bit, but it is
-#       always 0 here: this repository emits no Multi 32 set.
+#       multi32 is set here: this repository's RTL builds the Multi 32
+#       OutRunners profile, not System 32.
 #   b1: bit0=dual_pcb, bit1=vertical orientation flip, bit2=positional gun,
 #       bit3=Alien3 SERVICE12 coin layout, bits5:4=analog profile;
 #       bit6=dual-PCB comm RAM reset-to-FF
 #   b2: bits6:0=prot_sel; bit7=descriptor-selected EPR-14084 link HLE
 #   b3: bit7=physical sprite-bank metadata valid; bits1:0=bank mask
-PROT = dict(NONE=0, BRIVAL=2, DARKEDGE=3, F1LAP=4, DBZVRVS=5, JLEAGUE=6)
 ANALOG = dict(CENTERED=0, DRIVING=1, ALL_FF=2)
 DIGITAL = dict(GENERIC=0, RADM=1)
 def desc(multi32=0, v25=0, v25table=0, adc=0, ppi=0,
@@ -66,40 +68,6 @@ def desc(multi32=0, v25=0, v25table=0, adc=0, ppi=0,
 
 GAMES = {
     # parent: (descriptor, per-set list built from clones automatically)
-    # One universal production profile contains both standard-board
-    # peripherals and the real V25 implementation. Runtime descriptor fields
-    # select the hardware used by each supported parent.
-    "arabfgt":  desc(v25=1, v25table=1, ppi=1),
-    "brival":   desc(ppi=1, prot=PROT["BRIVAL"]),
-    "darkedge": desc(ppi=1, prot=PROT["DARKEDGE"]),
-    "ga2":      desc(v25=1, v25table=0, ppi=1),
-    "holo":     desc(flip_y=1),
-    # Alien3 and Jurassic Park are standard System 32 analog gun boards. The
-    # gun flag selects direct USB/SNAC coordinates into the existing MSM6253
-    # ADC; it does not select a framebuffer/HUD blend path. Alien3's cabinet
-    # uses the alternate SERVICE12 coin/start wiring, while Jurassic Park does
-    # not.
-    "alien3":   desc(adc=1, gun=1, coin_swap=1),
-    "jpark":    desc(adc=1, gun=1),
-    # Rad Mobile Deluxe adds the 837-7753 moving-controller mailbox on the
-    # 315-5296 C/G/D port group. MAME does not emulate that board, but the Sega
-    # manual, main ROM transaction loop and EPR-13686 handshake establish it.
-    "radm":     desc(adc=1, analog=ANALOG["DRIVING"],
-                     digital=DIGITAL["RADM"], motor_hle=1),
-    "radr":     desc(adc=1, analog=ANALOG["DRIVING"], comm_hle=1,
-                     gear_toggle=1),
-    "spidman":  desc(ppi=1),
-    # Slip Stream's analog driving board is the MSM6253 at 0xC00050. The
-    # gear-change input is a latched toggle on P1_A bit 0; both are selected
-    # from the shared Standard-profile descriptor, never a game macro.
-    "slipstrm": desc(adc=1, analog=ANALOG["DRIVING"], gear_toggle=1),
-    # The football board uses the ordinary System 32 map.  J.League shares
-    # the same ROM/inputs but installs the 0x20f700 protection write handler;
-    # keep those clone-specific descriptors explicit rather than inheriting
-    # the plain svf parent descriptor.
-    "svf":      desc(),
-    "jleague":  desc(prot=PROT["JLEAGUE"]),
-    "jleagueo": desc(prot=PROT["JLEAGUE"]),
     # OutRunners is a Sega System Multi 32 board (837-8676 / 171-6253C): NEC
     # V70 at 20 MHz, two 315-5388/5242/5296 video+I/O sets driving two JAMMA
     # edges, one YM3438 and one 315-5560 MultiPCM, and the 837-7536 A/D board.
@@ -122,87 +90,17 @@ GAMES = {
     "orunners": desc(multi32=1, adc=1, analog=ANALOG["DRIVING"]),
 }
 
-# These parents/sets are intentionally no longer part of the production
-# profile.  Keep clone names explicit when their parent is supported, otherwise
-# the parent fallback in gen() would emit them.
-# Keep the exclusion explicit so a future source refresh cannot re-emit them by
-# accident simply because MAME still contains their ROM definitions.
-IGNORED_PARENTS = {
-    "arescue", "dbzvrvs", "f1en", "f1lap", "sonic",
-}
-
-# The non-Rev-A European Football clone is intentionally not a production
-# target. Keep this set-level exclusion explicit so a refresh of MAME's clone
-# list cannot re-emit it through the supported svf parent fallback.
-IGNORED_SETS = {"svfo"}
+# This repository supports only the "orunners" parent (+ its orunnersu/
+# orunnersj clones), so no MAME parent/set needs to be explicitly excluded
+# from the parent fallback in gen(). Kept as empty collections rather than
+# deleted: gen() still references both by name.
+IGNORED_PARENTS = set()
+IGNORED_SETS = set()
 
 # Per-game button labels/defaults are part of the MRA contract, not the board
 # descriptor. Keep them here so regenerating tracked MRAs preserves the
 # remapping UI metadata as well as the ROM stream.
 BUTTONS = {
-    # The trailing Pause entry is not cosmetic: the core exposes an OSD Pause
-    # (CONF_STR "O[12],Pause,Off,On" -> status[12], which gates the CPU/sound
-    # clock enables and mutes audio in Arcade-SegaSystem32.sv).  The three
-    # tracked ga2 MRAs ship that mapping on Y; omitting it here meant any
-    # regeneration silently dropped a working control.  Pinned by
-    # test_ga2_mras_keep_the_pause_mapping in verif/test_gen_mra.py.
-    "ga2": (
-        "Attack,Jump,-,-,-,-,Start,Coin,Test,Service,Pause",
-        "A,B,Start,Select,R,L,Y",
-    ),
-    "arabfgt": (
-        "Attack,Jump,-,-,-,-,Start,Coin,Test,Service,Pause",
-        "A,B,Start,Select,R,L,Y",
-    ),
-    "brival": (
-        "Light Punch,Medium Punch,Heavy Punch,Light Kick,Medium Kick,Heavy Kick,Start,Coin,Test,Service",
-        "A,B,X,Y,R,L,Start,Select",
-    ),
-    "darkedge": (
-        "Light Punch,Heavy Punch,Jump,Light Kick,Heavy Kick,-,Start,Coin,Test,Service",
-        "A,B,R,X,Y,Start,Select,L",
-    ),
-    "holo": (
-        "Light Attack,Heavy Attack,-,-,-,-,Start,Coin,Test,Service",
-        "A,B,Start,Select,R,L",
-    ),
-    # Alien3's cabinet has a trigger plus a second gun button. Keep its
-    # button assignment separate from Jurassic Park's single Shoot input.
-    "alien3": (
-        "Trigger,Button,-,-,-,-,Start,Coin,Test,Service",
-        "A,B,Start,Select,R,L",
-    ),
-    "jpark": (
-        "Shoot,-,-,-,-,-,Start,Coin,Test,Service",
-        "A,Start,Select,R,L",
-    ),
-    # Every driving cabinet gets the shared digital Accelerate/Brake fallbacks
-    # on B1/B2 -- they drive the MSM6253 accelerator and brake channels to full
-    # scale for players without analog pedals.  Naming them here is what makes
-    # them visible and assignable in the MiSTer input menu.
-    #
-    # Rad Mobile's two cabinet switches are the headlight and the wiper
-    # (segas32.cpp INPUT_PORTS_START(radm): BUTTON1 "Light", BUTTON2 "Wiper"),
-    # carried on player-port bits 1/2 and sourced from B3/B4 so they do not
-    # collide with the pedals.  Rad Mobile has no gear selector.
-    "radm": (
-        "Accelerate,Brake,Light,Wiper,-,-,Start,Coin,Test,Service",
-        "A,B,X,Y,Start,Select,R,L",
-    ),
-    # Rad Rally's gear toggle is on B3, matching Slip Stream; this previously
-    # named B1 "Gear Change", which was the accelerator button.
-    "radr": (
-        "Accelerate,Brake,Gear Change,-,-,-,Start,Coin,Test,Service",
-        "A,B,X,Start,Select,R,L",
-    ),
-    "spidman": (
-        "Attack,Jump,-,-,-,-,Start,Coin,Test,Service",
-        "A,B,Start,Select,R,L",
-    ),
-    "slipstrm": (
-        "Accelerate,Brake,Gear Change,-,-,-,Start,Coin,Test,Service",
-        "A,B,X,Start,Select,R,L",
-    ),
     # OutRunners drives its pedals and wheel through the A/D board, so the
     # digital buttons are only the shifter and the in-car music selector:
     # BUTTON1/2 = shift up/down, BUTTON3 = DJ/music, BUTTON4/5 = track skip
@@ -211,45 +109,15 @@ BUTTONS = {
         "Shift Up,Shift Down,DJ/Music,Music Prev,Music Next,-,Start,Coin,Test,Service",
         "A,B,X,Y,R,Start,Select,L",
     ),
-    # Arcade Museum's Super Visual Football panel labels the three game
-    # buttons Shoot / Pass-A / Pass-B (see the linked machine record at
-    # https://www.arcade-museum.com/Videogame/super-visual-football-european-sega-cup).
-    # Supported football-family sets share this standard two-player,
-    # three-button System 32 input port.
-    "svf": (
-        "Shoot,Pass-A,Pass-B,-,-,-,Start,Coin,Test,Service",
-        "A,B,X,Start,Select,R,L",
-    ),
 }
 
 BUTTON_COUNTS = {
-    "arabfgt": 2,
-    "brival": 6,
-    "darkedge": 5,
-    "ga2": 2,
-    "holo": 2,
-    "alien3": 2,
-    "jpark": 1,
     "orunners": 5,
-    "radm": 4,
-    "radr": 3,
-    "spidman": 2,
-    "slipstrm": 3,
-    "svf": 3,
 }
-# All supported parents use the one universal production image.
-RBF_BY_PARENT = {parent: "Arcade-SegaSystem32" for parent in GAMES}
+# The one supported parent uses the one universal production image.
+RBF_BY_PARENT = {"orunners": "Arcade-SegaSystem32"}
 
-UNSUPPORTED = {"as1", "as1a", "as1b", "as1c", "sonicp"}
-
-# MAME init_* ROM pokes the hardware cannot supply, keyed by parent and applied
-# to every set of that parent. Offsets are local to the maincpu index-4 stream.
-PATCHES = {
-    # MAME's init_jpark applies this compatibility poke for an unmodelled
-    # moving-controller/drive-board response. Preserve it in the MRA stream;
-    # it is not an Alien3 video workaround and does not add framebuffer RAM.
-    "jpark": [(0xC15A8, "70 CD CD D8")],
-}
+UNSUPPORTED = set()
 
 def parse(src):
     """Return {setname: {'regions': [(region, size, loads)], 'title', 'parent'}}"""
@@ -449,9 +317,6 @@ def gen(setname, data, outdir):
         lines.append(f'  <rom index="{REGION_INDEX[reg]}" zip="{rom_zips}" md5="none">')
         parts, _ = interleave_parts(r["loads"], region_size, ctx=f"{setname}/{reg}")
         lines += parts
-        if reg == "maincpu":
-            for off, patch_hex in PATCHES.get(parent, []):
-                lines.append(f'    <patch offset="0x{off:X}">{patch_hex}</patch>')
         lines.append('  </rom>')
 
     # Defaults precede index 0 so the descriptor is the final boot commit.
