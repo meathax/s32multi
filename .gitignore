@@ -89,3 +89,6 @@ __pycache__/
 /.codegraph/
 /.mame_mcp/
 /snap/
+
+# sv-graph elaborated design index (rebuilt on demand from the QIP sources)
+/.svgraph/

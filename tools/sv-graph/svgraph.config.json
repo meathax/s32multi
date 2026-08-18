@@ -1,0 +1,32 @@
+{
+  "slang": "slang",
+  "manifests": [
+    "files.qip",
+    "Arcade-SegaSystem32.qsf"
+  ],
+  "tops": [
+    "emu"
+  ],
+  "exclude": [
+    "^sys/"
+  ],
+  "slang_flags": [
+    "--single-unit",
+    "--ignore-unknown-modules",
+    "--timescale",
+    "1ns/1ps",
+    "--allow-use-before-declare",
+    "--relax-enum-conversions",
+    "--allow-hierarchical-const",
+    "-Wnone"
+  ],
+  "lint_flags": [
+    "--single-unit",
+    "--ignore-unknown-modules",
+    "--timescale",
+    "1ns/1ps",
+    "--allow-use-before-declare",
+    "--relax-enum-conversions",
+    "--allow-hierarchical-const"
+  ]
+}
