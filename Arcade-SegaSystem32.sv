@@ -118,6 +118,7 @@ wire [31:0] joystick_0, joystick_1, joystick_2, joystick_3, joystick_4, joystick
 wire [15:0] joystick_l_analog_0;
 wire [15:0] joystick_l_analog_1;
 wire [15:0] joystick_r_analog_0;
+wire [15:0] joystick_r_analog_1;
 wire        core_hs, core_vs;
 wire        mode_416_active;
 wire [24:0] ps2_mouse;
@@ -341,6 +342,7 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io (
     .joystick_l_analog_1(joystick_l_analog_1),
     .joystick_l_analog_2(),
     .joystick_r_analog_0(joystick_r_analog_0),
+    .joystick_r_analog_1(joystick_r_analog_1),
     .paddle_0(),
     .paddle_1(),
     .ps2_mouse(ps2_mouse)
@@ -531,22 +533,44 @@ s32_driving_controls driving_controls (
     .accel(driving_accel),
     .brake(driving_brake)
 );
-// Driving cabinets wire the wheel, accelerator, and brake to the first three
-// MSM6253 channels. MiSTer's left-stick X is the wheel; right-stick up/down
-// are the analog pedals, with A/B as full-scale digital fallbacks. The wheel
-// follows the current deadzoned stick coordinate directly; retaining an IIR
-// history here made continuous sweeps pause at stale intermediate positions.
-// P2's axes (adc_ch[4..7], the Multi 32 analog_bank half) are wired in a
-// later revision; OutRunners is a two-cockpit cabinet and this is currently
-// P1-only.
-assign adc_ch[0] = driving_wheel;
-assign adc_ch[1] = driving_accel;
-assign adc_ch[2] = driving_brake;
-assign adc_ch[3] = 8'hff;
-assign adc_ch[4] = 8'h80;
-assign adc_ch[5] = 8'h80;
-assign adc_ch[6] = 8'h80;
-assign adc_ch[7] = 8'h80;
+// OutRunners is a two-cockpit cabinet: P2 gets its own wheel/pedal set on
+// the second joystick's analog axes, read through the ADC's bank-1 slots
+// (segas32.cpp in2_analog_read/in3_analog_read select
+// m_analog_ports[bank*4+2/3] -- see the s32_msm6253 comment in s32_core.sv).
+// adc0_load (the wheel-sample strobe) is RadM-specific and P1-only; P2's
+// wheel follows the deadzoned stick directly like P1's does when RadM
+// capture is not active.
+wire [7:0] driving_wheel_p2;
+wire [7:0] driving_accel_p2;
+wire [7:0] driving_brake_p2;
+s32_driving_controls driving_controls_p2 (
+    .clk(clk_sys),
+    .rst(reset),
+    .capture_wheel(1'b0),
+    .wheel_sample(1'b0),
+    .left_x(joystick_l_analog_1[7:0]),
+    .right_y(joystick_r_analog_1[15:8]),
+    .digital_accel(joystick_1[4]),
+    .digital_brake(joystick_1[5]),
+    .wheel(driving_wheel_p2),
+    .accel(driving_accel_p2),
+    .brake(driving_brake_p2)
+);
+// Driving cabinets wire the wheel, accelerator, and brake to the MSM6253
+// channels. MiSTer's left-stick X is the wheel; right-stick up/down are the
+// analog pedals, with A/B as full-scale digital fallbacks. The wheel follows
+// the current deadzoned stick coordinate directly; retaining an IIR history
+// here made continuous sweeps pause at stale intermediate positions.
+// Channel layout matches MAME's fixed ANALOG1/2 + banked ANALOG3/4 (bank 0)
+// and ANALOG7/8 (bank 1) -- see the s32_msm6253 instantiation comment.
+assign adc_ch[0] = driving_wheel;      // ANALOG1: P1 wheel (fixed)
+assign adc_ch[1] = driving_accel;      // ANALOG2: P1 accel (fixed)
+assign adc_ch[2] = driving_brake;      // ANALOG3: P1 brake (bank 0)
+assign adc_ch[3] = driving_wheel_p2;   // ANALOG4: P2 wheel (bank 0)
+assign adc_ch[4] = 8'h80;              // unused: an0/an1 never read bank 1
+assign adc_ch[5] = 8'h80;              // unused: an0/an1 never read bank 1
+assign adc_ch[6] = driving_accel_p2;   // ANALOG7: P2 accel (bank 1)
+assign adc_ch[7] = driving_brake_p2;   // ANALOG8: P2 brake (bank 1)
 // MAME system32_generic: port C is unused; port E/SERVICE12 is
 // {unknown[7:6], start2, start1, coin2, coin1, test, service}, active low.
 // Test = the OSD "Service Mode" toggle OR the mappable Test button (j12);

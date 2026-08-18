@@ -1080,7 +1080,14 @@ generate
             .cs(wr_stb && sel_adc && m_be[0]), // 0xC00050-57
             .we(m_we), .addr(A[2:1]),
             .dout_bit(adc_bit),
-            .an0(adc_ch[{analog_bank[0], 2'd0}]), .an1(adc_ch[{analog_bank[0], 2'd1}]),
+            // MAME wires only ADC channels 2/3 through the 4053 bank mux
+            // (sega_multi32_analog_state::in2_analog_read/in3_analog_read,
+            // m_analog_ports[bank*4+2/3]); channels 0/1 are fixed to
+            // ANALOG1/ANALOG2 (adc.set_input_tag<0/1>) regardless of bank.
+            // adc_ch[0..3] = bank0's ANALOG1-4, adc_ch[4..7] = bank1's
+            // ANALOG5-8 slots (OutRunners populates ANALOG7/8 there, not
+            // ANALOG5/6 -- see the adc_ch assignment in Arcade-SegaSystem32.sv).
+            .an0(adc_ch[0]), .an1(adc_ch[1]),
             .an2(adc_ch[{analog_bank[0], 2'd2}]), .an3(adc_ch[{analog_bank[0], 2'd3}])
         );
         always @(posedge clk_sys)
