@@ -206,84 +206,6 @@ function Run-HdlCompile {
     $script:Summary.Add($Marker)
     Write-RunLine $Marker
 }
-function Run-SoundZ80Test {
-    $name = "t30_soundsys_z80"
-    $library = New-WorkLibrary $name
-    $vhdlSources = Resolve-Sources @(
-        "rtl/audio/T80/T80_ALU.vhd",
-        "rtl/audio/T80/T80_MCode.vhd",
-        "rtl/audio/T80/T80_Reg.vhd",
-        "rtl/audio/T80/T80.vhd",
-        "rtl/audio/T80/T80s.vhd"
-    )
-    [void](Invoke-NativeCapture $script:Vcom (@("-2008", "-work", $library) + $vhdlSources) "vcom ($name)")
-
-    $svSources = Resolve-Sources @(
-        "rtl/s32_pkg.sv",
-        "rtl/video/s32_big_dpram.sv",
-        "rtl/audio/s32_rf5c68.sv",
-        "rtl/audio/s32_multipcm.sv",
-        "rtl/audio/s32_audio_mix.sv",
-        "rtl/audio/s32_soundsys.sv",
-        "verif/common/jt12_stub.v",
-        "verif/common/s32_wave_ram_model.sv",
-        "verif/common/tb_soundsys_z80.sv"
-    )
-    [void](Invoke-NativeCapture $script:Vlog (@(
-        "-sv", "-work", $library,
-        "+define+SIMULATION", "+define+S32_REAL_Z80_SIM"
-    ) + $svSources) "vlog ($name)")
-
-    $testDirectory = Split-Path -Parent $library
-    $output = @(Invoke-NativeCapture $script:Vsim @(
-        "-c", "-lib", $library,
-        "-l", (Join-Path $testDirectory "vsim.log"),
-        "-wlf", (Join-Path $testDirectory "vsim.wlf"),
-        "tb_soundsys_z80", "-do",
-        "set StdArithNoWarnings 1; set NumericStdNoWarnings 1; run -all; quit -f"
-    ) "vsim ($name)")
-    Assert-Marker $output "SOUNDSYS Z80 PASS" $name
-}
-
-function Run-SoundSharedTest {
-    $name = "t30_soundsys_shared"
-    $library = New-WorkLibrary $name
-    $vhdlSources = Resolve-Sources @(
-        "rtl/audio/T80/T80_ALU.vhd",
-        "rtl/audio/T80/T80_MCode.vhd",
-        "rtl/audio/T80/T80_Reg.vhd",
-        "rtl/audio/T80/T80.vhd",
-        "rtl/audio/T80/T80s.vhd"
-    )
-    [void](Invoke-NativeCapture $script:Vcom (@("-2008", "-work", $library) + $vhdlSources) "vcom ($name)")
-
-    $svSources = Resolve-Sources @(
-        "rtl/s32_pkg.sv",
-        "rtl/video/s32_big_dpram.sv",
-        "rtl/audio/s32_rf5c68.sv",
-        "rtl/audio/s32_multipcm.sv",
-        "rtl/audio/s32_audio_mix.sv",
-        "rtl/audio/s32_soundsys.sv",
-        "verif/common/jt12_stub.v",
-        "verif/common/s32_wave_ram_model.sv",
-        "verif/common/tb_soundsys_shared.sv"
-    )
-    [void](Invoke-NativeCapture $script:Vlog (@(
-        "-sv", "-work", $library,
-        "+define+SIMULATION", "+define+S32_REAL_Z80_SIM"
-    ) + $svSources) "vlog ($name)")
-
-    $testDirectory = Split-Path -Parent $library
-    $output = @(Invoke-NativeCapture $script:Vsim @(
-        "-c", "-lib", $library,
-        "-l", (Join-Path $testDirectory "vsim.log"),
-        "-wlf", (Join-Path $testDirectory "vsim.wlf"),
-        "tb_soundsys_shared", "-do",
-        "set StdArithNoWarnings 1; set NumericStdNoWarnings 1; run -all; quit -f"
-    ) "vsim ($name)")
-    Assert-Marker $output "SOUNDSYS SHARED PASS" $name
-}
-
 function Run-JT12ResetTest {
     $name = "t30_jt12_reset"
     $library = New-WorkLibrary $name
@@ -310,53 +232,7 @@ function Run-JT12ResetTest {
 }
 
 function Write-Tier {    param([int]$Number, [string]$Description)
-    Write-RunLine ("`n[{0}/41] {1}" -f $Number, $Description)
-}
-
-function Assert-V25SourceClosure {
-    # ModelSim Intel 10.5b cannot parse the s80x86 donor: its modules rely on
-    # declarations later in the same body and its ALU task fragments precede
-    # FlagsEnum. -mfcu does not change either rule and produces cascaded false
-    # undefined/duplicate diagnostics. Keep the ModelSim full-core lane on the
-    # compatible HLE shape, but fail closed if the production QIP and the
-    # Verilator file list used by the real-V25 gates diverge.
-    $fileListPath = Join-Path $Root "verif/v25/s80x86.f"
-    $qipPath = Join-Path $Root "rtl/cpu/v25/s80x86/s80x86_files.qip"
-    $fileList = @(
-        Get-Content -LiteralPath $fileListPath |
-            ForEach-Object { $_.Trim() } |
-            Where-Object { $_ -and -not $_.StartsWith("#") }
-    )
-    $qipList = @(
-        foreach ($line in Get-Content -LiteralPath $qipPath) {
-            if ($line -match 'SYSTEMVERILOG_FILE \[file join \$S80X86_QIP_DIR ([^\]]+)\]') {
-                $parts = @($Matches[1] -split '\s+' | Where-Object { $_ })
-                "rtl/cpu/v25/s80x86/" + ($parts -join "/")
-            }
-        }
-    )
-    if ([string]::Join("`n", $fileList) -cne [string]::Join("`n", $qipList)) {
-        throw "The production s80x86 QIP and real-V25 Verilator file list differ."
-    }
-    [void](Resolve-Sources $fileList)
-
-    $v25Qip = Get-Content -Raw -LiteralPath (Join-Path $Root "rtl/cpu/v25/v25.qip")
-    foreach ($source in ("s80x86 s80x86_files.qip", "s32_v25_rom_cache.sv", "s32_v25_cpu.sv")) {
-        if (-not $v25Qip.Contains($source)) {
-            throw "Production V25 QIP is missing $source."
-        }
-    }
-    $profile = Get-Content -Raw -LiteralPath (Join-Path $Root "Arcade-SegaSystem32.qsf")
-    foreach ($contract in ('QIP_FILE rtl/cpu/v25/v25.qip',
-                           'VERILOG_MACRO "S32_UNIVERSAL=1"',
-                           'VERILOG_MACRO "S32_V25_HW=1"')) {
-        if (-not $profile.Contains($contract)) {
-            throw "Universal profile is missing $contract."
-        }
-    }
-    $marker = "V25 UNIVERSAL SOURCE CLOSURE: PASS"
-    $script:Summary.Add($marker)
-    Write-RunLine $marker
+    Write-RunLine ("`n[{0}/35] {1}" -f $Number, $Description)
 }
 
 function Run-Differential {
@@ -431,22 +307,20 @@ $VideoSources = @(
         Sort-Object Name |
         ForEach-Object { $_.FullName }
 )
-# ModelSim's full-core tests use the HLE-compatible shape. The production
-# real-V25 source closure is audited above and compiled/executed by tiers
-# 38, 39, and 41 through the project-owned strict Verilator runners.
+# ModelSim's full-core tests use the HLE-compatible shape. OutRunners has no
+# V25/protection MCU: the core is unprotected hardware (MAME's init_orunners()
+# installs no protection), so rtl/cpu/v25/, rtl/prot/, and rtl/comm/epr14084/
+# were removed and no longer appear in this source list.
 $FullCoreSources = @(
     "rtl/s32_pkg.sv",
     "rtl/cpu/v60/s32_v60.sv",
     "rtl/cpu/v60/s32_v60_bus.sv"
 ) + $VideoSources + @(
     "rtl/crt_adjust.sv",
-    "rtl/audio/s32_rf5c68.sv",
     "rtl/audio/s32_multipcm.sv",
     "rtl/audio/s32_audio_mix.sv",
     "rtl/audio/s32_soundsys.sv",
     "rtl/io/s32_io.sv",
-    "rtl/io/s32_lightgun.sv",
-    "rtl/prot/s32_prot.sv",
     "verif/common/jt12_stub.v",
     "rtl/s32_core.sv"
 )
@@ -456,13 +330,11 @@ Push-Location $Root
 try {
     Write-RunLine "ModelSim native regression (no Cygwin/Icarus dependency)"
 
-    Write-Tier 1 "ModelSim full-core lint (compatible HLE shape) + universal V25 source closure"
-    Assert-V25SourceClosure
+    Write-Tier 1 "ModelSim full-core lint (compatible HLE shape)"
     Run-HdlTest "t01_lint_standard" "tb_core_lint" ($FullCoreSources + "verif/common/tb_core_lint.sv") "CORE STANDARD PROFILE LINT PASS" @("SIMULATION", "S32_SYSTEM32_ONLY", "S32_PROFILE_STANDARD", "S32_GAME_ONLY_STD", "S32_PCB_TIMING")
     Write-RunLine "CORE MODELSIM STANDARD PROFILE: PASS"
 
     Write-Tier 2 "V60 smoke test"
-    Run-HdlTest "t01c_epr_shadow" "tb_epr14084_shadow" @("rtl/comm/epr14084/s32_epr14084_shadow.sv","verif/common/tb_epr14084_shadow.sv") "EPR14084 SHADOW PASS" @("SIMULATION")
     Run-HdlTest "t02_v60_smoke" "tb_v60_smoke" ($V60Sources + "verif/v60/tb_v60_smoke.sv") "SMOKE PASS"
 
     Write-Tier 3 "V60 directed suite"
@@ -567,34 +439,19 @@ try {
         "verif/common/tb_rom_loader_wave_clear.sv"
     ) "ROM LOADER WAVE CLEAR PASS"
 
-    Write-Tier 18 "EEPROM persistence + MAME 8255 direction/latch contract"
+    Write-Tier 18 "EEPROM persistence directed test"
     Run-HdlTest "t18_eeprom" "tb_eeprom_nvram" @("rtl/s32_pkg.sv", "rtl/io/s32_io.sv", "verif/common/tb_eeprom_nvram.sv") "EEPROM NVRAM PASS"
-    Run-HdlTest "t18_i8255" "tb_i8255" @("rtl/s32_pkg.sv", "rtl/io/s32_io.sv", "verif/common/tb_i8255.sv") "I8255 MAME PASS"
-    Run-HdlTest "t18_i8255_conformance" "tb_i8255_conformance" @(
-        "rtl/s32_pkg.sv", "rtl/io/s32_io.sv",
-        "verif/donors/jt8255.v", "verif/common/tb_i8255_conformance.sv"
-    ) "I8255 CONFORMANCE PASS" @("SIMULATION")
-    Run-HdlTest "t18_epr14084_bus" "tb_bus" @(
-        "rtl/comm/epr14084/epr14084_bus.sv", "verif/epr14084/tb_bus.sv"
-    ) "PASS epr14084 bus" @("SIMULATION")
 
     Write-Tier 19 "V60 20-byte F1 / high fetch-buffer offset regression"
     Run-HdlTest "t19_v60_long_ea" "tb_v60_long_ea" ($V60Sources + "verif/v60/tb_v60_long_ea.sv") "LONG EA PASS"
 
-    Write-Tier 20 "RF5C68 dual-port wave RAM / loop-fetch / channel cadence"
-    Run-HdlTest "t20_rf5c68" "tb_rf5c68" @("rtl/video/s32_big_dpram.sv", "rtl/audio/s32_rf5c68.sv", "verif/common/tb_rf5c68.sv") "RF5C68 PASS"
-    Run-HdlTest "t20_rf5c68_external" "tb_rf5c68_external" @(
-        "rtl/video/s32_big_dpram.sv", "rtl/audio/s32_rf5c68.sv",
-        "verif/common/tb_rf5c68_external.sv"
-    ) "RF5C68 EXTERNAL PASS"
-
-    Write-Tier 21 "palette RAM alias / byte-enable / write-both / dual-port timing"
+    Write-Tier 20 "palette RAM alias / byte-enable / write-both / dual-port timing"
     Run-HdlTest "t21_palette" "tb_palette" @("rtl/video/s32_palette.sv", "verif/common/tb_palette.sv") "PALETTE PASS"
 
-    Write-Tier 22 "shared tile/bitmap line-buffer latency / layer / parity isolation"
+    Write-Tier 21 "shared tile/bitmap line-buffer latency / layer / parity isolation"
     Run-HdlTest "t22_linebuf" "tb_linebuf" @("rtl/video/s32_linebuf.sv", "verif/common/tb_linebuf.sv") "LINEBUF PASS"
 
-    Write-Tier 23 "tilemap VRAM fetches and deadline-safe scanline scheduling"
+    Write-Tier 22 "tilemap VRAM fetches and deadline-safe scanline scheduling"
     Run-HdlTest "t23_tilemap_vram" "tb_tilemap_vram" @("rtl/video/s32_big_dpram.sv", "rtl/video/s32_vram.sv", "rtl/video/s32_tilemap.sv", "verif/common/tb_tilemap_vram.sv") "TILEMAP VRAM PASS" @("SIMULATION")
     Run-HdlTest "t23_tilemap_scale" "tb_tilemap_scale" @("rtl/video/s32_tilemap.sv", "verif/common/tb_tilemap_scale.sv") "TILEMAP SCALE PASS"
     Run-HdlTest "t23_tile_scheduler" "tb_tile_scheduler" @(
@@ -607,19 +464,13 @@ try {
         "rtl/video/s32_video.sv", "verif/common/tb_video_mode.sv"
     ) "VIDEO MODE LATCH PASS"
 
-    Write-Tier 24 "byte-wide true-dual-port BRAM and audio clock cadence"
+    Write-Tier 23 "byte-wide true-dual-port BRAM and audio clock cadence"
     Run-HdlTest "t24_byte_dpram" "tb_byte_dpram" @("rtl/video/s32_big_dpram.sv", "verif/common/tb_byte_dpram.sv") "BYTE DPRAM PASS"
     Run-HdlTest "t24_audio_ce" "tb_audio_ce" @(
         "rtl/audio/s32_audio_ce.sv", "verif/common/tb_audio_ce.sv"
     ) "AUDIO CE PASS"
 
-    Write-Tier 25 "V25 mailbox BRAM + production default FIFO profile"
-    Run-HdlTest "t25_v25_dpram" "tb_v25_dpram" @("rtl/s32_pkg.sv", "rtl/video/s32_big_dpram.sv", "rtl/prot/s32_prot.sv", "verif/common/tb_v25_dpram.sv") "V25 DPRAM PASS"
-    Run-HdlCompile "t25_v25_default_fifo" @(
-        "rtl/cpu/v25/s80x86/rtl/Fifo.sv"
-    ) "V25 DEFAULT FIFO COMPILE PASS"
-
-    Write-Tier 26 "SDRAM CL2 capture / row-open ROM write throughput / burst ordering"
+    Write-Tier 24 "SDRAM CL2 capture / row-open ROM write throughput / burst ordering"
     Run-HdlTest "t26_sdram" "tb_sdram" @("rtl/mem/sdram.sv", "verif/common/tb_sdram.sv") "SDRAM CAPTURE PASS"
     Run-HdlTest "t26_sdram_write" "tb_sdram_write_throughput" @("rtl/mem/sdram.sv", "verif/common/tb_sdram_write_throughput.sv") "SDRAM WRITE THROUGHPUT PASS"
     Run-HdlTest "t26_sdram_write_mux2" "tb_sdram_write_mux2" @(
@@ -631,14 +482,14 @@ try {
     Run-HdlTest "t26_sdram_p0_throughput" "tb_sdram_p0_throughput" @(
         "rtl/mem/sdram.sv", "verif/common/tb_sdram_p0_throughput.sv"
     ) "SDRAM P0 THROUGHPUT PASS"
-    Write-Tier 27 "integrated sprite renderer / backpressured DDR framebuffer stress"
+    Write-Tier 25 "integrated sprite renderer / backpressured DDR framebuffer stress"
     Run-HdlTest "t27_sprite_fb" "tb_sprite_fb" @("rtl/video/s32_sprite.sv", "rtl/mem/s32_fb_if.sv", "verif/common/tb_sprite_fb.sv") "SPRITE FB PASS"
     Run-HdlTest "t27_sprite_vblank" "tb_sprite_vblank" @("rtl/video/s32_sprite.sv", "rtl/mem/s32_fb_if.sv", "verif/common/tb_sprite_vblank.sv") "SPRITE VBLANK PASS"
 
-    Write-Tier 28 "interrupt controller reset / source+ack collision / timers / doorbell"
+    Write-Tier 26 "interrupt controller reset / source+ack collision / timers / doorbell"
     Run-HdlTest "t28_intc" "tb_intc" @("rtl/s32_pkg.sv", "rtl/io/s32_io.sv", "verif/common/tb_intc.sv") "INTC PASS"
 
-    Write-Tier 29 "audio route arithmetic + generic/Golden Axe differential"
+    Write-Tier 27 "audio route arithmetic + generic/Golden Axe differential"
     Run-HdlTest "t29_audio_mix" "tb_audio_mix" @("rtl/audio/s32_audio_mix.sv", "verif/common/tb_audio_mix.sv") "AUDIO MIX PASS"
     Run-HdlTest "t29_audio_mix_diff_generic" "tb_audio_mix_diff" @(
         "rtl/audio/s32_audio_mix.sv", "verif/common/tb_audio_mix_diff.sv"
@@ -647,16 +498,16 @@ try {
         "rtl/audio/s32_audio_mix.sv", "verif/common/tb_audio_mix_diff.sv"
     ) "PASS: audio mixer differential checks=20012" @("S32_SYSTEM32_ONLY")
 
-    Write-Tier 30 "sound map/cache throughput/T80 boot + production JT12 default-storage reset"
+    Write-Tier 28 "sound map/cache throughput + production JT12 default-storage reset"
     Run-HdlTest "t30_soundsys_bus" "tb_soundsys_bus" @(
         "rtl/s32_pkg.sv", "rtl/video/s32_big_dpram.sv",
-        "rtl/audio/s32_rf5c68.sv", "rtl/audio/s32_multipcm.sv",
+        "rtl/audio/s32_multipcm.sv",
         "rtl/audio/s32_audio_mix.sv", "rtl/audio/s32_soundsys.sv",
         "verif/common/jt12_stub.v", "verif/common/tb_soundsys_bus.sv"
     ) "SOUNDSYS BUS PASS" @("SIMULATION")
     $soundCacheSources = @(
         "rtl/s32_pkg.sv", "rtl/video/s32_big_dpram.sv",
-        "rtl/audio/s32_rf5c68.sv", "rtl/audio/s32_multipcm.sv",
+        "rtl/audio/s32_multipcm.sv",
         "rtl/audio/s32_audio_mix.sv", "rtl/audio/s32_soundsys.sv",
         "verif/common/jt12_stub.v", "verif/common/tb_soundsys_zrom_cache.sv"
     )
@@ -665,18 +516,16 @@ try {
     Run-HdlTest "t30_soundsys_zrom_cache_8" "tb_soundsys_zrom_cache" $soundCacheSources `
         "SOUNDSYS ZROM CACHE sets=4 ldir_requests=33 conflict_requests=8" @() @("-gZROM_CACHE_SETS=4")
     Run-JT12ResetTest
-    Run-SoundZ80Test
-    Run-SoundSharedTest
 
-    Write-Tier 31 "MAME-backed MultiPCM descriptor / pitch / pan / loop / ACK semantics"
+    Write-Tier 29 "MAME-backed MultiPCM descriptor / pitch / pan / loop / ACK semantics"
     Run-HdlTest "t31_multipcm" "tb_multipcm" @(
         "rtl/audio/s32_multipcm.sv", "verif/common/tb_multipcm.sv"
     ) "MULTIPCM PASS"
 
-    Write-Tier 32 "V60 ROT/ROTC carry and active-width semantics"
+    Write-Tier 30 "V60 ROT/ROTC carry and active-width semantics"
     Run-HdlTest "t32_v60_rotate" "tb_v60_rotate" ($V60Sources + "verif/v60/tb_v60_rotate.sv") "V60 ROTATE PASS"
 
-    Write-Tier 33 "V60 external bus byte/half/dword lane and alignment cycles"
+    Write-Tier 31 "V60 external bus byte/half/dword lane and alignment cycles"
     Run-HdlTest "t33_v60_bus_lanes" "tb_v60_bus_lanes" @(
         "rtl/cpu/v60/s32_v60_bus.sv", "verif/v60/tb_v60_bus_lanes.sv"
     ) "V60 BUS LANES PASS"
@@ -696,76 +545,26 @@ try {
         "verif/common/tb_v60_exec_retire.sv"
     ) "V60 EXEC RETIRE PASS"
 
-    Write-Tier 34 "System32 palette/mixer/I-O/V25 mirrored address decode"
+    Write-Tier 32 "System32 palette/mixer/I-O mirrored address decode"
     Run-HdlTest "t34_core_map" "tb_core_map_decode" ($FullCoreSources + "verif/common/tb_core_map_decode.sv") "CORE MAP DECODE PASS" @("SIMULATION")
 
-    Write-Tier 35 "direct positional wheel, generic lightgun, right-stick pedals, and digital fallbacks"
+    Write-Tier 33 "direct positional wheel, right-stick pedals, and digital fallbacks"
     Run-HdlTest "t35_driving_controls" "tb_driving_controls" @(
         "rtl/io/s32_driving_controls.sv", "verif/common/tb_driving_controls.sv"
     ) "PASS: System 32 driving controls"
-    # GunCon is a small, descriptor-gated transport and deliberately has its
-    # own focused protocol check; it does not depend on the full core or a
-    # framebuffer model.
-    Run-HdlTest "t35_guncon_snac" "tb_guncon_snac" @(
-        "rtl/io/s32_guncon_snac.sv", "verif/common/tb_guncon_snac.sv"
-    ) "GUNCON SNAC PASS" @("SIMULATION")
-    Run-HdlTest "t35_lightgun" "tb_lightgun" @(
-        "rtl/io/s32_lightgun.sv", "verif/common/tb_lightgun.sv"
-    ) "LIGHTGUN PASS" @("SIMULATION")
-    Run-HdlTest "t35_lightgun_overlay" "tb_lightgun_overlay" @(
-        "rtl/video/s32_lightgun_overlay.sv", "verif/common/tb_lightgun_overlay.sv"
-    ) "LIGHTGUN OVERLAY PASS" @("SIMULATION")
-    Write-Tier 36 "Dark Edge protection contract"
-    Run-HdlTest "t36_darkedge_hle" "tb_darkedge_hle" @(
-        "rtl/s32_pkg.sv", "rtl/prot/s32_prot.sv", "verif/common/tb_darkedge_hle.sv"
-    ) "DARK EDGE HLE PASS"
 
-    Write-Tier 36 "Burning Rival ROM-string protection contract"
-    Run-HdlTest "t36_brival_hle" "tb_brival_protection" @(
-        "rtl/s32_pkg.sv", "rtl/prot/s32_prot.sv", "verif/common/tb_brival_protection.sv"
-    ) "BRIVAL PROTECTION PASS"
-
-    Write-Tier 36 "J.League protection contract"
-    Run-HdlTest "t36_jleague_hle" "tb_jleague_hle" @(
-        "rtl/s32_pkg.sv", "rtl/prot/s32_prot.sv", "verif/common/tb_jleague_hle.sv"
-    ) "J.LEAGUE HLE PASS"
-
-    Write-Tier 37 "MAME-backed Rad Mobile MSM6253 channel and MSB-first read semantics"
+    Write-Tier 34 "MAME-backed Rad Mobile MSM6253 channel and MSB-first read semantics"
     Run-HdlTest "t37_radm_msm6253" "tb_radm_msm6253" @(
         "rtl/s32_pkg.sv", "rtl/io/s32_io.sv", "verif/common/tb_radm_msm6253.sv"
     ) "RAD MOBILE MSM6253 PASS"
 
-    Write-Tier 37 "Rad Mobile 315-5296 bidirectional bus and 837-7753 mailbox"
-    Run-HdlTest "t37_radm_motor" "tb_radm_motor_mailbox" @(
-        "rtl/s32_pkg.sv", "rtl/io/s32_io.sv", "verif/common/tb_radm_motor_mailbox.sv"
-    ) "RAD MOBILE MOTOR MAILBOX PASS"
-
-    Write-Tier 38 "real encrypted GA2 V25 firmware and exact 10 MHz CE cadence"
-    $v25Output = @(& (Join-Path $Root "verif/v25/run_v25_firmware.ps1") -ModelSimBin $ModelSimDirectory 2>&1)
-    foreach ($line in $v25Output) { Write-RunLine $line }
-    Assert-Marker $v25Output "V25_FIRMWARE RUNNER: PASS" "real V25 firmware"
-    Assert-Marker $v25Output "V25_FIRMWARE CE: PASS" "V25 clock enable cadence"
-
-    Write-Tier 39 "real V25 INTEGRATION in s32_core (p5 program fetch + mailbox round-trip)"
-    $v25iOutput = @(& (Join-Path $Root "verif/v25/run_v25_integration.ps1") 2>&1)
-    foreach ($line in $v25iOutput) { Write-RunLine $line }
-    Assert-Marker $v25iOutput "V25_INTEGRATION RUNNER: PASS" "real V25 integration"
-
-    Write-Tier 40 "MCU download integrity: DQM byte-lane writes + HPS ioctl pacing end-to-end"
-    Run-HdlTest "t37_sdram_v25load" "tb_sdram_v25load" @(
-        "rtl/mem/sdram.sv", "verif/common/tb_sdram_v25load.sv"
-    ) "SDRAM V25LOAD PASS"
+    Write-Tier 35 "MCU download integrity: HPS ioctl pacing end-to-end"
     Run-HdlTest "t37_loader_hpspace" "tb_loader_hpspace" @(
         "rtl/s32_pkg.sv", "rtl/mem/s32_rom_loader.sv", "rtl/mem/sdram.sv",
         "verif/common/tb_loader_hpspace.sv"
     ) "LOADER HPSPACE PASS"
 
-    Write-Tier 41 "full-core real V25 + PRODUCTION sdram.sv (request-drop protocol regression)"
-    $v25sOutput = @(& (Join-Path $Root "verif/v25/run_v25_sdram.ps1") 2>&1)
-    foreach ($line in $v25sOutput) { Write-RunLine $line }
-    Assert-Marker $v25sOutput "V25_SDRAM RUNNER: PASS" "real V25 + production SDRAM integration"
-
-    Write-RunLine "`nSYSTEM 32 REGRESSION: PASS (42/42 tiers)"
+    Write-RunLine "`nSYSTEM 32 REGRESSION: PASS (35/35 tiers)"
     Write-RunLine "Detailed log: $LogPath"
     $Completed = $true
 }

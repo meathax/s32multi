@@ -38,7 +38,8 @@ module tb_core_map_decode;
         .in_p1b(8'hff), .in_p2b(8'hff), .in_portc_b(8'hff),
         .in_svc12_b(8'hff), .in_svc34_b(8'hff),
         .adc_ch(adc),
-        .ppi_pa(8'hff), .ppi_pb(8'hff), .ppi_pc(8'hff)
+        .ppi_pa(8'hff), .ppi_pb(8'hff), .ppi_pc(8'hff),
+        .screen_sel(1'b0)
     );
 
     reg [23:0] probe;
@@ -65,61 +66,37 @@ module tb_core_map_decode;
     endtask
 
     initial begin
-        bd.has_ppi = 1'b1;
-        bd.has_v25 = 1'b1;
+        // has_ppi/has_v25 are no longer selectable: cfg_has_ppi is hardcoded
+        // 0 in s32_core.sv (this board has no PPI, no V25) regardless of the
+        // descriptor, so sel_ppi never fires -- see the flipped expect_decode
+        // ppi=0 below and the removed PPI bus-seam test.
         bd.comm_link_hle = 1'b1;
         force core.A = probe;
 
-        // 0x600000/0x610000 windows, including MAME's A19:A17 mirrors.
+        // 0x600000/0x610000 windows, including A18:A17 mirrors. A19 is no
+        // longer a mirror bit here: this board is always Multi 32
+        // (is_multi32 is a build constant), so A19 genuinely selects
+        // screen A (0) vs screen B/pal1-mix1 (1) -- the two addresses below
+        // keep A19=0 to stay in screen-A/pal0-mix0 territory while still
+        // varying A18/A17 to prove those remain don't-care.
         expect_decode(24'h600000, 1,0,0,0,0,0);
-        expect_decode(24'h6e1234, 1,0,0,0,0,0);
+        expect_decode(24'h661234, 1,0,0,0,0,0);
         expect_decode(24'h610000, 0,1,0,0,0,0);
-        expect_decode(24'h6f807e, 0,1,0,0,0,0);
+        expect_decode(24'h670000, 0,1,0,0,0,0);
 
         // 315-5296: 00-1f only; A19:A7 are mirrors. Expansion has A6 set.
         expect_decode(24'hc00000, 0,0,1,0,0,0);
         expect_decode(24'hc51280, 0,0,1,0,0,0);
         expect_decode(24'hc00020, 0,0,0,0,0,0);
         expect_decode(24'hc00040, 0,0,0,1,0,0);
-        expect_decode(24'hcabc60, 0,0,0,1,1,0);
+        // Original address (0xcabc60) had A19=1, which under always-on
+        // Multi 32 selects io1's 0xC8xxxx window, not this ioex mirror --
+        // moved to an A19=0 address to keep testing what this line means to
+        // test (ioex mirroring). Also no longer expects ppi=1: the PPI
+        // (s32_i8255) was removed and cfg_has_ppi is hardcoded 0 in
+        // s32_core.sv, so sel_ppi can never fire regardless of descriptor.
+        expect_decode(24'hc0abe0, 0,0,0,1,0,0);
         expect_decode(24'hc00068, 0,0,0,1,0,0);
-
-        // Exercise the real V60-side PPI bus seam at 0xc00060.  The
-        // descriptor gate is the same bit emitted for arabfgt,
-        // darkedge, ga2, and spidman; the Python descriptor test keeps that
-        // parent set complete while this transaction proves the integrated
-        // request/read-mux path.
-        core_rst = 1'b0;
-        force core.m_req = 1'b0;
-        @(posedge clk); #1;  // initialize the core's un-reset read-ack latch
-        force core.m_req = 1'b1;
-        force core.m_be = 2'b01;
-        force core.m_we = 1'b1;
-        force core.m_wdata = 16'h0080;
-        probe = 24'hc00066; @(posedge clk); #1;  // mode 0, all outputs
-        force core.m_wdata = 16'h000f;
-        probe = 24'hc00066; @(posedge clk); #1;  // BSR set PC7
-        if (core.ppi.pc_out[7] !== 1'b1) begin
-            $display("FAIL PPI V60 bus BSR PC7 pc_out=%02x", core.ppi.pc_out);
-            errors = errors + 1;
-        end
-        // End the write transaction so the core's registered read/ack
-        // pipeline can arm a fresh PPI read.
-        force core.m_req = 1'b0;
-        @(posedge clk); #1;
-        force core.m_req = 1'b1;
-        force core.m_we = 1'b0;
-        probe = 24'hc00064;
-        @(posedge clk); @(posedge clk); #1;
-        if (core.m_rdata[7:0] !== 8'h80) begin
-            $display("FAIL PPI V60 bus read rdata=%02x", core.m_rdata[7:0]);
-            errors = errors + 1;
-        end
-        release core.m_req;
-        release core.m_be;
-        release core.m_we;
-        release core.m_wdata;
-        core_rst = 1'b1;
 
         // GA2's MB8421 right-side window is not mirrored across 0xAxxxxx.
         expect_decode(24'ha00000, 0,0,0,0,0,1);

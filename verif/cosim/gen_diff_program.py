@@ -86,12 +86,12 @@ def main():
     img = gen(seed)
     cpu, m = run_ref(img)
     # program image as $readmemh (16-bit words, little-endian)
-    with open(out + ".hex", "w") as f:
+    with open(out + ".hex", "w", newline="\n") as f:
         words = len(img) // 2 + 1
         padded = img + b"\x00" * (words * 2 - len(img))
         for i in range(words):
             f.write("%04x\n" % (padded[2*i] | (padded[2*i+1] << 8)))
-    with open(out + ".expected", "w") as f:
+    with open(out + ".expected", "w", newline="\n") as f:
         for i in range(8):
             f.write("R%d=%08x\n" % (i, cpu.r[i]))
         for i in range(8):

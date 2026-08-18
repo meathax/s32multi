@@ -162,6 +162,8 @@ wire hit0 = rvalid0[rom_set] && (rtag0[rom_set] == rom_byte_addr[23:1]);
 wire hit1 = rvalid1[rom_set] && (rtag1[rom_set] == rom_byte_addr[23:1]);
 wire rom_hit = hit0 || hit1;
 wire [15:0] rom_word = hit0 ? rdata0[rom_set] : rdata1[rom_set];
+// No RF5C68 on this board -- see the tie-off comment near pcm_cs below.
+wire        rf_cpu_wait = 1'b0;
 assign z_wait_n = ~((rom_sel && z_mem_rd && !rom_hit) || rf_cpu_wait);
 
 always @(posedge clk) begin
@@ -244,11 +246,11 @@ wire        pcm_cs = (z_addr[15:13] == 3'b110);   // C000-DFFF
 
 // RF5C68 removed: the real Multi 32 board carries one 315-5560 MultiPCM at
 // this window and no RF5C68 (confirmed by physical board photos and MAME's
-// device config). rf_cpu_wait and the wave_rd/wave_wr port pair (System 32's
-// external-SDRAM wave-RAM aperture, never used on hardware -- see the removed
-// 2026-08-14 revert note in git history) are tied inactive so the port list
-// and the wait-state OR term above need no change.
-wire        rf_cpu_wait = 1'b0;
+// device config). rf_cpu_wait (declared near the top of the file, before its
+// z_wait_n use) and the wave_rd/wave_wr port pair (System 32's external-SDRAM
+// wave-RAM aperture, never used on hardware -- see the removed 2026-08-14
+// revert note in git history) are tied inactive so the port list and the
+// wait-state OR term above need no change.
 assign wave_rd_req = 1'b0;
 assign wave_rd_addr = 16'h0000;
 assign wave_wr_req = 1'b0;
