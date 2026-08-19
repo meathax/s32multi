@@ -102,17 +102,21 @@ IGNORED_SETS = set()
 # remapping UI metadata as well as the ROM stream.
 BUTTONS = {
     # OutRunners drives its pedals and wheel through the A/D board, so the
-    # digital buttons are only the shifter and the in-car music selector:
-    # BUTTON1/2 = shift up/down, BUTTON3 = DJ/music, BUTTON4/5 = track skip
-    # back/forward (segas32.cpp INPUT_PORTS_START(orunners)).
+    # digital buttons are the shifter, the in-car music selector, and two
+    # dedicated digital pedal fallbacks: BUTTON1/2 = shift up/down,
+    # BUTTON3 = DJ/music, BUTTON4/5 = track skip back/forward (segas32.cpp
+    # INPUT_PORTS_START(orunners)), BUTTON6/7 = assignable digital
+    # Accelerate/Brake feeding the MSM6253 pedal channels (previously
+    # aliased onto the shifter buttons, so shifting also floored a pedal).
     "orunners": (
-        "Shift Up,Shift Down,DJ/Music,Music Prev,Music Next,-,Start,Coin,Test,Service",
-        "A,B,X,Y,R,Start,Select,L",
+        "Shift Up,Shift Down,DJ/Music,Music Prev,Music Next,Accelerate,Brake,"
+        "Start,Coin,Test,Service",
+        "A,B,X,Y,R,-,-,Start,Select,L",
     ),
 }
 
 BUTTON_COUNTS = {
-    "orunners": 5,
+    "orunners": 7,
 }
 # The one supported parent uses the one universal production image.
 RBF_BY_PARENT = {"orunners": "Arcade-SegaSystem32Multi"}

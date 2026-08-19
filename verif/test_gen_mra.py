@@ -24,10 +24,11 @@ class ButtonMetadataTests(unittest.TestCase):
         names, defaults = BUTTONS["orunners"]
         self.assertEqual(names.split(","),
                          ["Shift Up", "Shift Down", "DJ/Music", "Music Prev",
-                          "Music Next", "-", "Start", "Coin", "Test",
-                          "Service"])
+                          "Music Next", "Accelerate", "Brake", "Start",
+                          "Coin", "Test", "Service"])
         self.assertEqual(defaults.split(","),
-                         ["A", "B", "X", "Y", "R", "Start", "Select", "L"])
+                         ["A", "B", "X", "Y", "R", "-", "-", "Start",
+                          "Select", "L"])
 
 
 class EepromArchiveSourceTests(unittest.TestCase):

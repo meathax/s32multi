@@ -189,7 +189,11 @@ localparam CONF_STR = {
     "O[28:27],Scale,Normal,V-Integer,HV-Integer;",
     "-;",
     "R[0],Reset;",
-    "J1,B1,B2,B3,B4,B5,B6,Start,Coin,Test,Service;",
+    // B1/B2 = shift up/down, B3 = DJ/music, B4/B5 = track <</>>,
+    // B6/B7 = dedicated digital Accelerate/Brake (previously aliased onto
+    // B1/B2, which made shifting also floor the pedal). Bit layout:
+    // 4..10 = B1..B7, 11 = Start, 12 = Coin, 13 = Test, 14 = Service.
+    "J1,B1,B2,B3,B4,B5,B6,B7,Start,Coin,Test,Service;",
     "V,v",`BUILD_DATE
 };
 
@@ -509,7 +513,14 @@ wire [7:0] gear_toggle_p1a = {p1a_dig[7:1], ~radr_gear};
 wire [7:0] core_p1a = active_board.gear_toggle ? gear_toggle_p1a :
                        (active_board.digital_profile == DIGITAL_RADM) ? radm_p1a :
                        p1a_dig;
-wire [7:0] core_p2a = p2a_dig;
+// OutRunners routes PLAYER 1's music keys through the P2_A port (MAME
+// INPUT_PORTS_START(orunners): P2_A bit0 = P1 DJ/music, bit1 = P1 track <<,
+// bit2 = P1 track >>). Feeding p2a_dig (the second player's shift buttons)
+// here left all three music keys dead in the service menu's INPUT TEST and
+// in-game. Player 2's own controls live on the second I/O chip: P1_B carries
+// P2 shift up/down and P2_B carries P2's music keys (wired at the s32_core
+// instantiation below).
+wire [7:0] core_p2a = {5'h1f, ~joystick_0[8], ~joystick_0[7], ~joystick_0[6]};
 
 wire [7:0] adc_ch [0:7];
 // MiSTer reports each analog-stick axis as signed -128..+127. Split the right
@@ -527,8 +538,11 @@ s32_driving_controls driving_controls (
     .wheel_sample(adc0_load),
     .left_x(joystick_l_analog_0[7:0]),
     .right_y(joystick_r_analog_0[15:8]),
-    .digital_accel(joystick_0[4]),
-    .digital_brake(joystick_0[5]),
+    // Dedicated assignable Accelerate/Brake buttons (MRA buttons 6/7,
+    // joystick bits 9/10). These used to alias Shift Up/Down (bits 4/5),
+    // so shifting gear also floored the digital pedal.
+    .digital_accel(joystick_0[9]),
+    .digital_brake(joystick_0[10]),
     .digital_left(joystick_0[1]),
     .digital_right(joystick_0[0]),
     .wheel(driving_wheel),
@@ -552,8 +566,8 @@ s32_driving_controls driving_controls_p2 (
     .wheel_sample(1'b0),
     .left_x(joystick_l_analog_1[7:0]),
     .right_y(joystick_r_analog_1[15:8]),
-    .digital_accel(joystick_1[4]),
-    .digital_brake(joystick_1[5]),
+    .digital_accel(joystick_1[9]),
+    .digital_brake(joystick_1[10]),
     .digital_left(joystick_1[1]),
     .digital_right(joystick_1[0]),
     .wheel(driving_wheel_p2),
@@ -580,14 +594,14 @@ assign adc_ch[7] = driving_brake_p2;   // ANALOG8: P2 brake (bank 1)
 // Test = the OSD "Service Mode" toggle OR the mappable Test button (j12);
 // Service (coin-service credit) = the mappable Service button (j13).
 wire [7:0] portc = 8'hff;
-wire test_btn = status[7] | joystick_0[12] | joystick_1[12];
-wire svc_btn  = joystick_0[13] | joystick_1[13];
+wire test_btn = status[7] | joystick_0[13] | joystick_1[13];
+wire svc_btn  = joystick_0[14] | joystick_1[14];
 wire [7:0] svc12 = ~{
                       2'b00,
-                      joystick_1[10],
-                      joystick_0[10],
                       joystick_1[11],
                       joystick_0[11],
+                      joystick_1[12],
+                      joystick_0[12],
                       test_btn, svc_btn};
 // Port F/SERVICE34: bits 3:0 = DIP SW1:1-4 (Off), bit4 = PCB Push SW1
 // (Service), bit5 = PCB Push SW2 (Test), bit6 unknown; bit7 is replaced by the
@@ -674,7 +688,11 @@ s32_core core (
     .eep_upload(eep_upload), .eep_modified(eep_modified),
     .in_p1a(core_p1a), .in_p2a(core_p2a),
     .in_portc(portc), .in_svc12(svc12), .in_svc34(svc34),
-    .in_p1b(p_dig(joystick_2)), .in_p2b(p_dig(joystick_3)),
+    // Second cockpit (Player 2, joystick_1): P1_B bits 1:0 = P2 shift
+    // up/down, P2_B bits 2:0 = P2 DJ/music + track <</>> (MAME
+    // INPUT_PORTS_START(orunners) P1_B/P2_B).
+    .in_p1b(p_dig(joystick_1)),
+    .in_p2b({5'h1f, ~joystick_1[8], ~joystick_1[7], ~joystick_1[6]}),
     .in_portc_b(8'hff), .in_svc12_b(8'hff), .in_svc34_b(8'hff),
     .adc_ch(adc_ch),
     .ppi_pa(core_ppi_pa), .ppi_pb(core_ppi_pb), .ppi_pc(core_ppi_pc),
