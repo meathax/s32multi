@@ -122,6 +122,23 @@ reg [7:0]  df_buf [0:11];
 
 reg [2:0] tick;
 reg [4:0] slot;
+
+// Position-update pipeline (Quartus timing fix): s_pos's commit for the
+// *next* sample was originally add+loop-wrap-compare+subtract, all
+// combinational in the tick==0 cycle -- report_timing showed this as the
+// design's worst path by a wide margin (Add21/Add22 ripple chains into
+// LessThan13, 37ns arrival against a 20.7ns clk_sys budget). s_pos[slot] is
+// not read again until this slot's next tick==0, 224 ticks later (28 slots x
+// 8 ticks), so only the *commit* needs to move, not the read that issues
+// this sample's ROM fetch (still tick==0, still the pre-update value, per
+// the play_base3 comment below). Splitting the add (tick==0) from the
+// compare+subtract+commit (tick==1) removes the second chain link from the
+// same cycle without changing when any other tick==0 signal is valid.
+reg        pos_commit_pending;
+reg [4:0]  pos_commit_slot;
+reg [37:0] pos_commit_add;
+reg [33:0] pos_commit_loop_span;
+reg [37:0] pos_commit_end16;
 reg [4:0] play_slot;
 reg       rom_is_desc;
 reg       rom_beat12;
@@ -131,6 +148,39 @@ reg       play_odd;
 reg [7:0] play_mid;
 reg [21:0] play_base3;
 reg signed [21:0] acc_l, acc_r;
+
+// Timing-driven pipeline for the per-sample mix MAC (sample*tl_gain ->
+// *env_gain -> *alfo_gain -> pan -> accumulate). The original code chained
+// all three multiplies plus the pan mux and the acc_l/acc_r adds combinationally
+// in the same cycle as the ROM ack, which measured -12.239ns worst-case setup
+// slack on Cyclone V (3 back-to-back DSP multiplies is too deep for one
+// clk_sys period). Voice slots are only revisited once per full 28-slot pass
+// (tick 0..7 then slot 0..27, ~7+ idle tick cycles between one voice's ROM
+// ack and the next slot-27 frame-wrap acc_l/acc_r reset -- see s32_core.sv
+// timing note above s_pos's own pipeline), so spreading the three multiplies
+// over three extra clk_sys cycles is free: nothing else reads mac_p1_val/
+// mac_p2_val, and acc_l/acc_r only ever receive one pipelined contribution at
+// a time because ROM acks for successive voices are separated by that same
+// idle-tick margin.
+reg        mac_p1_valid, mac_p2_valid;
+reg [4:0]  mac_p1_slot, mac_p2_slot;
+reg signed [15:0] mac_p1_val;   // sample*tl_gain, already >>>10
+reg signed [15:0] mac_p2_val;   // *env_gain, already >>>12
+
+// Same rationale, second offender found once the acc_l/acc_r MAC above was
+// fixed: STA's next worst path was s_lfo_phase->pos_commit_add at -4.679ns,
+// through pitch_delta_q24 (9x17) chained straight into pitch_adj_mul (a
+// 25x26 multiply -- deep enough on its own to miss timing) before ever
+// reaching the pos_commit_add register. Split the two multiplies across a
+// clk_sys cycle: stage 1 below computes pitch_delta_q24 (small) at tick==0
+// same as before; stage 2 (unconditional, next cycle) does the 25x26
+// multiply and hands off to the existing pos_commit pipeline. Same margin
+// argument as pos_commit's own stages: tick 0->7 gives >=7 idle cycles
+// before this slot's next tick==0 visit.
+reg        pitch_p1_valid;
+reg [4:0]  pitch_p1_slot;
+reg [24:0] pitch_p1_step;
+reg signed [25:0] pitch_p1_delta;
 
 integer ri;
 integer rj;
@@ -484,6 +534,10 @@ always @(posedge clk) begin
         rom_addr <= 0;
         rom_is_desc <= 0;
         rom_beat12 <= 0;
+        pos_commit_pending <= 1'b0;
+        mac_p1_valid <= 1'b0;
+        mac_p2_valid <= 1'b0;
+        pitch_p1_valid <= 1'b0;
         play_beat2_pending <= 0;
         play_fmt12 <= 0;
         play_odd <= 0;
@@ -528,6 +582,20 @@ always @(posedge clk) begin
             df_buf[ri] <= 0;
     end
     else begin
+        // Default-pulse mac_p1_valid low; the rom_ack MAC-pipeline stage 0
+        // below overrides this with <= 1'b1 in the same cycle a new sample
+        // is fetched, so this only takes effect on cycles with no fresh
+        // rom_ack (standard default-then-override NBA idiom -- the override
+        // wins because it executes later in program order this same edge).
+        mac_p1_valid <= 1'b0;
+        // NOTE: pitch_p1_valid deliberately has NO every-clk default clear.
+        // Unlike the MAC pipeline above (whose stages all live in this
+        // always-on clk domain), the pitch-LFO pipeline is produced and
+        // consumed inside the `ce`-gated voice state machine below, and `ce`
+        // is a slow audio-sample enable. A default clear here would fire on
+        // the very next clk -- long before the next `ce` -- and silently drop
+        // every deferred position update. It is cleared explicitly by its
+        // stage-2 consumer instead, exactly like pos_commit_pending.
         // Register writes are on the Z80 clock domain represented by clk and
         // must not be dropped merely because the audio sample CE is low.
         if (cs && we) begin
@@ -601,6 +669,18 @@ always @(posedge clk) begin
                         s_active[df_slot] <= 1'b1;
                         s_pos[df_slot] <= 0;
                         key_wait[df_slot] <= 1'b0;
+                        // A stage-2 position commit (see the pipeline above)
+                        // may still be in flight for this same slot from
+                        // before the retrigger; cancel it so it cannot land
+                        // after this reset and clobber s_pos back to a stale
+                        // pre-retrigger position.
+                        if (pos_commit_pending && pos_commit_slot == df_slot)
+                            pos_commit_pending <= 1'b0;
+                        // Same cancellation, one stage earlier: a pitch-LFO
+                        // multiply in flight for this slot must not resolve
+                        // into a pos_commit after this reset either.
+                        if (pitch_p1_valid && pitch_p1_slot == df_slot)
+                            pitch_p1_valid <= 1'b0;
                         // gew.cpp retrigger_sample()+envelope_generator_calc:
                         // restart the envelope from ATTACK/vol=0 and
                         // recompute the key-scaled rate base. LFO phase is
@@ -635,13 +715,6 @@ always @(posedge clk) begin
             else begin
                 reg signed [15:0] sample;
                 reg signed [31:0] mul1;
-                reg signed [15:0] stage1;
-                reg signed [31:0] mul2;
-                reg signed [15:0] stage2;
-                reg signed [31:0] mul3;
-                reg signed [15:0] attenuated;
-                reg signed [15:0] panned_l;
-                reg signed [15:0] panned_r;
                 reg [6:0] tl;
                 // MultiPCM 8-bit samples are signed two's-complement, not
                 // unsigned/offset-binary.  Byte 80h therefore means -32768.
@@ -659,22 +732,50 @@ always @(posedge clk) begin
                 tl = sreg[play_slot][5][7:1];
                 // Real 7-bit-indexed TL attenuation table (gew.cpp's
                 // -24dB/64-step total-level curve) replacing the former
-                // coarse ">> (tl>>4)" shift.
+                // coarse ">> (tl>>4)" shift. Pipeline stage 0/3: this is the
+                // only multiply done in the ROM-ack cycle itself; *env_gain
+                // and *alfo_gain are deferred to mac_p1/mac_p2 below so no
+                // clk_sys edge ever sees more than one DSP multiply plus a
+                // shift on this path (see the pipeline note by acc_l/acc_r).
                 mul1 = sample * $signed({1'b0, tl_gain_rom[tl]});
-                stage1 = mul1 >>> 10;
-                // Envelope generator gain (EXP_VOL_ROM, Q12).
-                mul2 = stage1 * $signed({1'b0, s_env_gain[play_slot]});
-                stage2 = mul2 >>> 12;
-                // Amplitude LFO (tremolo) gain, Q10 via TL_GAIN_ROM reuse;
-                // neutral (1024) when tremolo depth is zero.
-                mul3 = stage2 * $signed({1'b0, s_alfo_gain[play_slot]});
-                attenuated = mul3 >>> 10;
-
-                panned_l = pan_sample(attenuated, sreg[play_slot][0][7:4], 1'b1);
-                panned_r = pan_sample(attenuated, sreg[play_slot][0][7:4], 1'b0);
-                acc_l <= acc_l + {{6{panned_l[15]}}, panned_l};
-                acc_r <= acc_r + {{6{panned_r[15]}}, panned_r};
+                mac_p1_valid <= 1'b1;
+                mac_p1_slot  <= play_slot;
+                mac_p1_val   <= mul1 >>> 10;
             end
+        end
+
+        // Pipeline stage 1/3: *env_gain (EXP_VOL_ROM, Q12). Runs every clk,
+        // independent of rom_ack, one cycle after stage 0 registers
+        // mac_p1_val/mac_p1_slot.
+        if (mac_p1_valid) begin
+            reg signed [31:0] mul2;
+            mul2 = mac_p1_val * $signed({1'b0, s_env_gain[mac_p1_slot]});
+            mac_p2_valid <= 1'b1;
+            mac_p2_slot  <= mac_p1_slot;
+            mac_p2_val   <= mul2 >>> 12;
+        end
+        else
+            mac_p2_valid <= 1'b0;
+
+        // Pipeline stage 2/3: Amplitude LFO (tremolo) gain, Q10 via
+        // TL_GAIN_ROM reuse (neutral 1024 when tremolo depth is zero), then
+        // pan and commit to acc_l/acc_r. Two cycles after the ROM ack that
+        // started this MAC -- well inside the >=7-cycle idle-tick margin
+        // before the next frame-wrap acc_l/acc_r reset, so this always
+        // lands before that reset and never overlaps a later voice's own
+        // stage-2 commit (ROM acks for successive voices are separated by
+        // that same margin).
+        if (mac_p2_valid) begin
+            reg signed [31:0] mul3;
+            reg signed [15:0] attenuated;
+            reg signed [15:0] panned_l;
+            reg signed [15:0] panned_r;
+            mul3 = mac_p2_val * $signed({1'b0, s_alfo_gain[mac_p2_slot]});
+            attenuated = mul3 >>> 10;
+            panned_l = pan_sample(attenuated, sreg[mac_p2_slot][0][7:4], 1'b1);
+            panned_r = pan_sample(attenuated, sreg[mac_p2_slot][0][7:4], 1'b0);
+            acc_l <= acc_l + {{6{panned_l[15]}}, panned_l};
+            acc_r <= acc_r + {{6{panned_r[15]}}, panned_r};
         end
 
         if (ce) begin
@@ -727,14 +828,10 @@ always @(posedge clk) begin
                 if (tick == 0 && s_active[slot]) begin
                     reg [9:0] pitch;
                     reg [24:0] step;
-                    reg [37:0] next_pos;
-                    reg [33:0] loop_span;
                     reg [23:0] lfo_phase_next;
                     reg [7:0]  lfo_idx;
                     reg signed [8:0] pitch_off;
                     reg signed [25:0] pitch_delta_q24;
-                    reg signed [50:0] pitch_adj_mul;
-                    reg signed [24:0] step_lfo;
                     reg [7:0]  amp_off;
                     reg [14:0] amp_idx_wide;
                     reg [6:0]  amp_idx;
@@ -752,16 +849,22 @@ always @(posedge clk) begin
                     s_lfo_phase[slot] <= lfo_phase_next;
                     lfo_idx = lfo_phase_next[23:16];
 
+                    // Pitch-LFO pipeline stage 1/2: only the small (9x17)
+                    // multiply happens here. The big 25x26 step*delta
+                    // multiply, the s_pos add and the pos_commit handoff are
+                    // deferred one clk_sys cycle to the pitch_p1_valid block
+                    // below -- see the pipeline note by its declaration.
                     if (sreg[slot][6][2:0] != 3'd0) begin
                         pitch_off = lfo_pitch_wave(lfo_idx);
                         pitch_delta_q24 = $signed(pitch_off) *
                             $signed({1'b0, pitch_k_rom[sreg[slot][6][2:0]]});
-                        pitch_adj_mul = $signed({1'b0, step}) * pitch_delta_q24;
-                        step_lfo = $signed({1'b0, step}) +
-                            (pitch_adj_mul >>> 24);
                     end
                     else
-                        step_lfo = $signed({1'b0, step});
+                        pitch_delta_q24 = 26'sd0;
+                    pitch_p1_valid <= 1'b1;
+                    pitch_p1_slot  <= slot;
+                    pitch_p1_step  <= step;
+                    pitch_p1_delta <= pitch_delta_q24;
 
                     if (sreg[slot][7][2:0] != 3'd0) begin
                         amp_off = lfo_amp_wave(lfo_idx);
@@ -773,11 +876,6 @@ always @(posedge clk) begin
                     else
                         s_alfo_gain[slot] <= 11'd1024;
 
-                    next_pos = s_pos[slot] + {13'd0, step_lfo[24:0]};
-                    loop_span = ({17'd0, s_end[slot]} - {18'd0, s_loop[slot]}) << 16;
-                    if (next_pos >= ({21'd0, s_end[slot]} << 16) && loop_span != 0)
-                        next_pos = next_pos - {4'd0, loop_span};
-                    s_pos[slot] <= next_pos;
                     play_slot <= slot;
                     play_fmt12 <= s_fmt12[slot];
                     play_odd <= s_pos[slot][16];
@@ -841,6 +939,47 @@ always @(posedge clk) begin
                         end
                     endcase
                     s_env_gain[slot] <= exp_vol_rom[newvol[25:16]];
+                end
+
+                // Pitch-LFO pipeline stage 2/2 (see pitch_p1_valid's
+                // declaration): the 25x26 step*delta multiply that was too
+                // deep to share a cycle with pos_commit_add's own logic.
+                // Feeds the existing pos_commit pipeline exactly as tick==0
+                // used to feed it directly, just one idle-tick cycle later.
+                if (pitch_p1_valid) begin
+                    reg signed [50:0] pitch_adj_mul;
+                    reg signed [24:0] step_lfo;
+                    reg [37:0] next_pos;
+                    reg [33:0] loop_span;
+                    pitch_p1_valid <= 1'b0;
+                    pitch_adj_mul = $signed({1'b0, pitch_p1_step}) * pitch_p1_delta;
+                    step_lfo = $signed({1'b0, pitch_p1_step}) +
+                        (pitch_adj_mul >>> 24);
+                    next_pos = s_pos[pitch_p1_slot] + {13'd0, step_lfo[24:0]};
+                    loop_span = ({17'd0, s_end[pitch_p1_slot]} -
+                        {18'd0, s_loop[pitch_p1_slot]}) << 16;
+                    pos_commit_pending  <= 1'b1;
+                    pos_commit_slot     <= pitch_p1_slot;
+                    pos_commit_add      <= next_pos;
+                    pos_commit_loop_span<= loop_span;
+                    pos_commit_end16    <= {21'd0, s_end[pitch_p1_slot]} << 16;
+                end
+
+                // Stage 3 of the s_pos position-update pipeline (see the
+                // declarations above): one clk_sys cycle after the pitch-LFO
+                // stage above registered the raw add, do the loop-wrap
+                // compare and conditional subtract here and commit
+                // s_pos[slot]. tick reaches 2 well before this slot's next
+                // tick==0 (224 ticks later), so this is always ready in time.
+                if (pos_commit_pending) begin
+                    reg [37:0] committed_pos;
+                    pos_commit_pending <= 1'b0;
+                    committed_pos = pos_commit_add;
+                    if (committed_pos >= pos_commit_end16 &&
+                        pos_commit_loop_span != 0)
+                        committed_pos = committed_pos -
+                            {4'd0, pos_commit_loop_span};
+                    s_pos[pos_commit_slot] <= committed_pos;
                 end
             end
         end

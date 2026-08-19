@@ -122,6 +122,12 @@ set_global_assignment -name ALM_REGISTER_PACKING_EFFORT MEDIUM
 # worst setup +0.204 ns, hold +0.099 ns, recovery +3.555 ns, removal
 # +0.278 ns, and minimum-pulse-width +0.398 ns. Keep seed 2 for the clean
 # full compile and release candidate.
+# 2026-08-18 OutRunners MultiPCM MAC+pitch-LFO pipeline (2 extra pipeline
+# stages, netlist grew): seed 2 misses the pll_hdmi Slow -40C corner at
+# -0.079 ns only (audio-domain setup itself is fully clean: +0.197 to
+# +2.506 ns across all 4 corners). Seed 3 tried and is worse (-0.402 ns
+# Slow 100C, -0.565 ns Slow -40C) -- reverting to seed 2, the documented
+# winner across this netlist's prior seed explorations too.
 set_global_assignment -name SEED 2
 # 2026-08-13: dropped from 8 to 2.  At 8, quartus_map and quartus_fit both died
 # with `*** Fatal Error: Access Violation` on this host; the fitter's stack
