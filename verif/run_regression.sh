@@ -221,6 +221,14 @@ vvp /tmp/s32_multipcm | grep -q "MULTIPCM PASS" && echo "MULTIPCM: PASS" || { ec
 # hardware music slow and warbling.
 iverilog -g2012 -o /tmp/s32_mpcm_cad   rtl/audio/s32_multipcm.sv verif/common/tb_multipcm_cadence.sv
 vvp /tmp/s32_mpcm_cad +ACK=30 +VOICES=28 | grep -q "MULTIPCM CADENCE PASS"   && vvp /tmp/s32_mpcm_cad +ACK=20 +VOICES=8 | grep -q "MULTIPCM CADENCE PASS"   && echo "MULTIPCM CADENCE: PASS" || { echo "MULTIPCM CADENCE: FAIL"; exit 1; }
+# OutRunners engine voice: MAME-captured key-on ordering (r4 KEY ON before
+# the r1 sample select), continuous pitch/TL/LFO updates, and depth-1
+# tremolo (r7=01). The engine is the only voice with tremolo enabled, and
+# the amp-LFO index slice bug ([6:0] instead of [14:8]) attenuated exactly
+# this voice by -35..-48 dB oscillating -- car engine inaudible on hardware
+# while music/tires/announcer (lfo_amp=0 descriptors) stayed correct.
+iverilog -g2012 -o /tmp/s32_mpcm_engv rtl/audio/s32_multipcm.sv verif/common/tb_multipcm_engine_voice.sv
+vvp /tmp/s32_mpcm_engv +ACK=30 | grep -q "ENGINE PASS"   && vvp /tmp/s32_mpcm_engv +ACK=100 | grep -q "ENGINE PASS"   && echo "MULTIPCM ENGINE VOICE: PASS" || { echo "MULTIPCM ENGINE VOICE: FAIL"; exit 1; }
 echo "[29/33] V60 ROT/ROTC carry and active-width semantics"
 iverilog -g2012 -o /tmp/s32_v60_rotate \
   rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv verif/v60/tb_v60_rotate.sv
