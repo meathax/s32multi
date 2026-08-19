@@ -922,8 +922,18 @@ always @(posedge clk) begin
                     if (sreg[slot][7][2:0] != 3'd0) begin
                         amp_off = lfo_amp_wave(lfo_idx);
                         amp_idx_wide = amp_off * amp_step_pow2(sreg[slot][7][2:0]);
+                        // Index is the SHIFTED product (tri*K)>>8, i.e. bits
+                        // [14:8] -- taking the raw low bits [6:0] here swept
+                        // the index 0..127 (up to -48dB, oscillating at the
+                        // LFO rate) instead of the intended 0..K-1 range.
+                        // OutRunners' engine voice is the only voice with
+                        // tremolo enabled (driver writes r7=01 every frame;
+                        // all sample descriptors carry lfo_amp=0), so this
+                        // bug silenced exactly the car engine and nothing
+                        // else. With K<=64 and tri<=255 the >>8 result
+                        // maxes at 63, so the 127 clamp is headroom only.
                         amp_idx = (amp_idx_wide >> 8) > 15'd127 ? 7'd127
-                                                                 : amp_idx_wide[6:0];
+                                                                 : amp_idx_wide[14:8];
                         s_alfo_gain[slot] <= {2'b0, tl_gain_rom[amp_idx]};
                     end
                     else
