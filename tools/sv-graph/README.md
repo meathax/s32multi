@@ -18,7 +18,7 @@ syntax-only tool. They can be answered from an elaborated design in one call.
 ## What it indexes
 
 The source list is not hand-maintained. `svgraph_qip.py` walks `files.qip` and
-`Arcade-SegaSystem32.qsf`, follows nested `.qip` files, and resolves both path
+`Arcade-SegaSystem32Multi.qsf`, follows nested `.qip` files, and resolves both path
 spellings used in this tree — plain relative paths and the Tcl
 `[file join $::quartus(qip_path) ...]` form, including local aliases such as
 `set V25_QIP_DIR $::quartus(qip_path)` in `rtl/cpu/v25/v25.qip`.

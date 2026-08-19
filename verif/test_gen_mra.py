@@ -131,7 +131,7 @@ class OptimizedLayoutTests(unittest.TestCase):
             self.assertEqual(root.findtext("setname"), expected_setnames[path.name])
             if expected_setnames[path.name] != "orunners":
                 self.assertEqual(root.findtext("parent"), "orunners")
-            self.assertEqual(root.findtext("rbf"), "Arcade-SegaSystem32")
+            self.assertEqual(root.findtext("rbf"), "Arcade-SegaSystem32Multi")
             buttons = root.find("buttons")
             self.assertIsNotNone(buttons, path.name)
             self.assertEqual(buttons.attrib["names"], BUTTONS["orunners"][0], path.name)
@@ -214,7 +214,7 @@ class OutRunnersInclusionTests(unittest.TestCase):
         mra_dir = Path(__file__).parents[1] / "releases"
         for path in sorted(mra_dir.glob("*.mra")):
             rbf = ElementTree.parse(path).getroot().findtext("rbf", "")
-            self.assertEqual(rbf, "Arcade-SegaSystem32", path.name)
+            self.assertEqual(rbf, "Arcade-SegaSystem32Multi", path.name)
 
 
 if __name__ == "__main__":

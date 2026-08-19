@@ -87,7 +87,7 @@ set_multicycle_path -hold -end -from [get_clocks SDRAM_CLK] \
 # 2026-08-05: CPU Turbo was retired from the single merged s32 profile (see
 # memory s32-single-profile-roadmap) specifically so this fixed-CE assumption
 # can apply unconditionally. Every board now runs a fixed per-game cadence
-# (Arcade-SegaSystem32.sv's cpu_ce_inc) with no Turbo multiplier, so every
+# (Arcade-SegaSystem32Multi.sv's cpu_ce_inc) with no Turbo multiplier, so every
 # board leaves at least one idle clk_sys edge between V60 updates and this
 # revision's internal V60 register paths have a real two-cycle requirement
 # universally -- there is no longer a second, single-cycle-timed revision.

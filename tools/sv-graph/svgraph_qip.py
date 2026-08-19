@@ -1,6 +1,6 @@
 """Resolve the project's Quartus source manifests into a flat source list.
 
-The core's file list lives in ``files.qip`` and ``Arcade-SegaSystem32.qsf``,
+The core's file list lives in ``files.qip`` and ``Arcade-SegaSystem32Multi.qsf``,
 which reference further ``.qip`` files (sys, T80, jt12, PLL, V25). Two spellings
 of a path appear in the tree:
 

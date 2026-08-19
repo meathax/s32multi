@@ -76,7 +76,7 @@ def validate(check_rtl: bool = False) -> list[str]:
         # One universal profile contains both standard-board peripherals and
         # the real V25 implementation; descriptors select the active path.
         for qsf, profile, needs_real_v25 in (
-            (ROOT / "Arcade-SegaSystem32.qsf", "S32_PROFILE_STANDARD=1", True),
+            (ROOT / "Arcade-SegaSystem32Multi.qsf", "S32_PROFILE_STANDARD=1", True),
         ):
             text = qsf.read_text(encoding="utf-8")
             if profile not in text:

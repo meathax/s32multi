@@ -128,7 +128,21 @@ set_global_assignment -name ALM_REGISTER_PACKING_EFFORT MEDIUM
 # +2.506 ns across all 4 corners). Seed 3 tried and is worse (-0.402 ns
 # Slow 100C, -0.565 ns Slow -40C) -- reverting to seed 2, the documented
 # winner across this netlist's prior seed explorations too.
-set_global_assignment -name SEED 2
+# 2026-08-19 MultiPCM cadence rewrite + envelope-gain pipeline stage (netlist
+# grew again): seed 2 now misses a DIFFERENT, unrelated path -- s32_video
+# hcnt -> s32_mixer ep_spr_s (sprite priority mixing) at -0.222 ns Slow
+# 100C. Not an audio path; this is placement variance exposed once the
+# audio-domain violation (previously much larger) stopped dominating.
+# Re-running the seed exploration on this netlist. Seed 1: -0.107 ns Slow
+# 100C (better than seed 2's -0.222, still violated). Seed 4: worse
+# (-0.297 ns Slow 100C, -0.538 ns Slow -40C). Seed 5: CLOSES all 4 corners
+# (+0.204/+0.211/+2.040/+2.515 ns setup, all hold positive, 0 critical
+# warnings). The violating path (s32_video hcnt -> s32_mixer ep_spr_s,
+# clk_sys->clk_ram) is unrelated to MultiPCM and feeds the sprite-priority
+# chain tb_mixer_pixel_latency.sv holds to a proven 12-clk_ram-edge budget,
+# so pipelining it was not an option without regression risk; seed 5 is the
+# real fix here. Keeping seed 5.
+set_global_assignment -name SEED 5
 # 2026-08-13: dropped from 8 to 2.  At 8, quartus_map and quartus_fit both died
 # with `*** Fatal Error: Access Violation` on this host; the fitter's stack
 # trace named deeply recursive TIS_ADVANCED_SPICE_RC_BODY::annotate_delay_tree

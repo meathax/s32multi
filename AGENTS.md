@@ -9,7 +9,7 @@ game-only macro.
 
 | Profile | Production macros | RBF | MRA parents | Hardware boundary |
 |---|---|---|---|---|
-| `Arcade-SegaSystem32` | `S32_PROFILE_STANDARD=1`, `S32_GAME_ONLY_STD=1`, `S32_UNIVERSAL=1`, `S32_V25_HW=1` | `Arcade-SegaSystem32.rbf` | all supported standard parents plus `ga2`, `arabfgt` | Standard-board peripherals and the real NEC V25 core/cache/program memories are compiled together; descriptor fields select V25 versus HLE and optional I/O/protection paths. |
+| `Arcade-SegaSystem32Multi` | `S32_PROFILE_STANDARD=1`, `S32_GAME_ONLY_STD=1`, `S32_UNIVERSAL=1`, `S32_V25_HW=1` | `Arcade-SegaSystem32Multi.rbf` | all supported standard parents plus `ga2`, `arabfgt` | Standard-board peripherals and the real NEC V25 core/cache/program memories are compiled together; descriptor fields select V25 versus HLE and optional I/O/protection paths. |
 
 The universal profile uses `rtl/s32_core.sv`; `S32_GAME_ONLY_STD` implies
 `GAME_ONLY`, but retains standard-profile descriptor-selected peripherals.
@@ -31,7 +31,7 @@ not supported or emitted.
    production source, QSF, MRA, or release script. Test-only feature macros
    must not alter production game routing.
 4. `tools/gen_mra.py`'s `RBF_BY_PARENT` is the only source of `<rbf>`
-   routing. Every supported parent resolves to `Arcade-SegaSystem32`.
+   routing. Every supported parent resolves to `Arcade-SegaSystem32Multi`.
 5. Use `tools/build-segas32.bat` for hardware builds (a thin wrapper around
    `tools/build.bat`). Preserve Quartus
    databases, obey the eight-worker Fast Fit policy, and do not build merely

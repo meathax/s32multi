@@ -115,7 +115,7 @@ BUTTON_COUNTS = {
     "orunners": 5,
 }
 # The one supported parent uses the one universal production image.
-RBF_BY_PARENT = {"orunners": "Arcade-SegaSystem32"}
+RBF_BY_PARENT = {"orunners": "Arcade-SegaSystem32Multi"}
 
 UNSUPPORTED = set()
 
@@ -289,7 +289,7 @@ def gen(setname, data, outdir):
         lines.append(f'  <parent>{parent}</parent>')
     lines.append(f'  <year>{data.get("year", "")}</year>')
     lines.append(f'  <manufacturer>{escape(data.get("manu", "Sega"))}</manufacturer>')
-    lines.append(f'  <rbf>{RBF_BY_PARENT.get(parent, "Arcade-SegaSystem32")}</rbf>')
+    lines.append(f'  <rbf>{RBF_BY_PARENT.get(parent, "Arcade-SegaSystem32Multi")}</rbf>')
     button_meta = BUTTONS.get(parent)
     if button_meta:
         names, defaults = button_meta

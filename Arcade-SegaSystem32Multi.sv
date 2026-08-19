@@ -529,6 +529,8 @@ s32_driving_controls driving_controls (
     .right_y(joystick_r_analog_0[15:8]),
     .digital_accel(joystick_0[4]),
     .digital_brake(joystick_0[5]),
+    .digital_left(joystick_0[1]),
+    .digital_right(joystick_0[0]),
     .wheel(driving_wheel),
     .accel(driving_accel),
     .brake(driving_brake)
@@ -552,6 +554,8 @@ s32_driving_controls driving_controls_p2 (
     .right_y(joystick_r_analog_1[15:8]),
     .digital_accel(joystick_1[4]),
     .digital_brake(joystick_1[5]),
+    .digital_left(joystick_1[1]),
+    .digital_right(joystick_1[0]),
     .wheel(driving_wheel_p2),
     .accel(driving_accel_p2),
     .brake(driving_brake_p2)

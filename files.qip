@@ -2,9 +2,9 @@
 # hardware on that board or its 837-7536 A/D PCB; no other game's peripherals
 # are compiled in.
 set_global_assignment -name QIP_FILE sys/sys.qip
-set_global_assignment -name SDC_FILE Arcade-SegaSystem32.sdc
+set_global_assignment -name SDC_FILE Arcade-SegaSystem32Multi.sdc
 
-set_global_assignment -name SYSTEMVERILOG_FILE Arcade-SegaSystem32.sv
+set_global_assignment -name SYSTEMVERILOG_FILE Arcade-SegaSystem32Multi.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/s32_pkg.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/s32_core.sv
 

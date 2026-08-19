@@ -48,7 +48,7 @@ class GlobalProfileContractTests(unittest.TestCase):
 
     def test_exactly_one_universal_quartus_profile_exists(self) -> None:
         """One QPF/QSF builds the whole core; no per-game project files."""
-        for name in ("Arcade-SegaSystem32.qpf", "Arcade-SegaSystem32.qsf"):
+        for name in ("Arcade-SegaSystem32Multi.qpf", "Arcade-SegaSystem32Multi.qsf"):
             self.assertTrue((ROOT / name).is_file(), name)
         for name in ("segas32v25.qpf", "segas32v25.qsf"):
             self.assertFalse((ROOT / name).exists(), name)
@@ -59,7 +59,7 @@ class GlobalProfileContractTests(unittest.TestCase):
     def test_qsf_sets_outrunners_profile_and_no_legacy_macros(self) -> None:
         """The QSF must select S32_OUTRUNNERS and nothing from the old
         multi-game "universal profile" macro set."""
-        qsf = (ROOT / "Arcade-SegaSystem32.qsf").read_text(encoding="utf-8")
+        qsf = (ROOT / "Arcade-SegaSystem32Multi.qsf").read_text(encoding="utf-8")
         self.assertIn('VERILOG_MACRO "S32_OUTRUNNERS=1"', qsf)
         self.assertIn('VERILOG_MACRO "S32_PCB_TIMING=1"', qsf)
         for macro in (
@@ -109,7 +109,7 @@ class GlobalProfileContractTests(unittest.TestCase):
         """P1/P2 Gun Input, Sinden Borders, Gun Crosshair and Gun Sensitivity
         were removed with the lightgun/SNAC hardware -- OutRunners has no
         positional-gun cabinet."""
-        text = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
+        text = (ROOT / "Arcade-SegaSystem32Multi.sv").read_text(encoding="utf-8")
         for needle in (
             '"O[8],Sinden Borders,',
             '"O[34],Gun Crosshair,',
@@ -125,12 +125,12 @@ class GlobalProfileContractTests(unittest.TestCase):
         """The Multi 32 second-screen CONF_STR entry used to be compiled out
         under `` `ifndef S32_SYSTEM32_ONLY ``; that macro no longer exists so
         the option must always be present."""
-        text = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
+        text = (ROOT / "Arcade-SegaSystem32Multi.sv").read_text(encoding="utf-8")
         self.assertIn("`ifndef S32_SYSTEM32_ONLY", text)
         self.assertIn('"O[6],Screen (Multi32),A,B;"', text)
         self.assertIn("`ifdef S32_SYSTEM32_ONLY", text)
         self.assertIn("wire [23:0] game_rgb = status[6] ? rgb_b : rgb_a;", text)
-        qsf = (ROOT / "Arcade-SegaSystem32.qsf").read_text(encoding="utf-8")
+        qsf = (ROOT / "Arcade-SegaSystem32Multi.qsf").read_text(encoding="utf-8")
         self.assertNotIn('VERILOG_MACRO "S32_SYSTEM32_ONLY=1"', qsf)
 
     def test_core_has_no_dangling_removed_hardware_references(self) -> None:
@@ -152,7 +152,7 @@ class GlobalProfileContractTests(unittest.TestCase):
         shared with."""
         core = (ROOT / "rtl/s32_core.sv").read_text(encoding="utf-8")
         files_qip = (ROOT / "files.qip").read_text(encoding="utf-8")
-        qsf = (ROOT / "Arcade-SegaSystem32.qsf").read_text(encoding="utf-8")
+        qsf = (ROOT / "Arcade-SegaSystem32Multi.qsf").read_text(encoding="utf-8")
         self.assertIn("module s32_v60_exec_cadence", core)
         self.assertIn("s32_v60_exec_cadence v60_cadence", core)
         self.assertIn(".ce(v60_exec_ce)", core)
@@ -170,7 +170,7 @@ class GlobalProfileContractTests(unittest.TestCase):
         as a fixed capability: no OSD toggle, status[29] stays reserved,
         fast_v60 tied 1 in the top.
         """
-        top = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
+        top = (ROOT / "Arcade-SegaSystem32Multi.sv").read_text(encoding="utf-8")
         core = (ROOT / "rtl/s32_core.sv").read_text(encoding="utf-8")
         cpu = (ROOT / "rtl/cpu/v60/s32_v60.sv").read_text(encoding="utf-8")
         # Hardwired on in the top; no OSD entry, no status-bit consumer.
@@ -214,14 +214,14 @@ class GlobalProfileContractTests(unittest.TestCase):
         self.assertIn("rs <= R_EMIT", sprite)
 
     def test_production_osd_has_no_debug_pause_or_aim_override(self) -> None:
-        top = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
+        top = (ROOT / "Arcade-SegaSystem32Multi.sv").read_text(encoding="utf-8")
         self.assertNotIn("O[12],Pause", top)
         self.assertNotIn("Analog Aim Invert", top)
         self.assertNotIn("wire pause = status[12]", top)
         self.assertIn(".pause(1'b0)", top)
 
     def test_every_emitted_mra_routes_to_a_known_profile(self) -> None:
-        self.assertEqual(RBF_BY_PARENT, {parent: "Arcade-SegaSystem32" for parent in GAMES})
+        self.assertEqual(RBF_BY_PARENT, {parent: "Arcade-SegaSystem32Multi" for parent in GAMES})
         seen = set()
         for path in MRA_DIR.glob("*.mra"):
             root = ElementTree.parse(path).getroot()
@@ -268,7 +268,7 @@ class GlobalProfileContractTests(unittest.TestCase):
         that the gun cabinet hardware (Alien 3 / Jurassic Park's boards) is
         out of scope for this repository.
         """
-        text = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
+        text = (ROOT / "Arcade-SegaSystem32Multi.sv").read_text(encoding="utf-8")
         core = (ROOT / "rtl/s32_core.sv").read_text(encoding="utf-8")
         io = (ROOT / "rtl/io/s32_io.sv").read_text(encoding="utf-8")
         fb_if = (ROOT / "rtl/mem/s32_fb_if.sv").read_text(encoding="utf-8")
@@ -301,7 +301,7 @@ class GlobalProfileContractTests(unittest.TestCase):
         deleted. The dead PPI-port wiring that used to be descriptor-selected
         via prot_sel must now be permanently tied off, not still switching on
         a live descriptor field."""
-        text = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
+        text = (ROOT / "Arcade-SegaSystem32Multi.sv").read_text(encoding="utf-8")
         self.assertNotIn("prot_sel", text)
         self.assertNotIn("PROT_DARKEDGE", text)
         self.assertNotIn("PROT_BRIVAL", text)
@@ -309,7 +309,7 @@ class GlobalProfileContractTests(unittest.TestCase):
         self.assertIn("wire darkedge_inputs = 1'b0;", text)
 
     def test_production_video_path_includes_core_side_crt_adjust(self) -> None:
-        text = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
+        text = (ROOT / "Arcade-SegaSystem32Multi.sv").read_text(encoding="utf-8")
         files_qip = (ROOT / "files.qip").read_text(encoding="utf-8")
         regression = (ROOT / "verif/run_regression.ps1").read_text(encoding="utf-8")
         shell_regression = (ROOT / "verif/run_regression.sh").read_text(encoding="utf-8")
@@ -359,7 +359,7 @@ class GlobalProfileContractTests(unittest.TestCase):
         digital A/B fallbacks -- fed straight to the ADC now that the old
         gun_aim override ternary (shared with Alien 3/Jurassic Park's gun
         boards) has been removed along with the gun hardware."""
-        text = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
+        text = (ROOT / "Arcade-SegaSystem32Multi.sv").read_text(encoding="utf-8")
         controls = (ROOT / "rtl/io/s32_driving_controls.sv").read_text(
             encoding="utf-8")
         self.assertIn(".joystick_r_analog_0(joystick_r_analog_0)", text)
@@ -373,7 +373,7 @@ class GlobalProfileContractTests(unittest.TestCase):
         self.assertNotIn("gun_aim ? gun_adc", text)
 
     def test_driving_wheel_has_no_stateful_intermediate_position(self) -> None:
-        text = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
+        text = (ROOT / "Arcade-SegaSystem32Multi.sv").read_text(encoding="utf-8")
         controls = (ROOT / "rtl/io/s32_driving_controls.sv").read_text(
             encoding="utf-8")
         self.assertIn(".left_x(joystick_l_analog_0[7:0])", text)
@@ -409,7 +409,7 @@ class GlobalProfileContractTests(unittest.TestCase):
         protection module were all deleted -- none of them are OutRunners
         hardware."""
         core = (ROOT / "rtl/s32_core.sv").read_text(encoding="utf-8")
-        top = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
+        top = (ROOT / "Arcade-SegaSystem32Multi.sv").read_text(encoding="utf-8")
         self.assertNotIn("s32_arescue_dsp dsp (", core)
         for removed in ("trackball",):
             self.assertNotIn(removed, (core + top).lower())

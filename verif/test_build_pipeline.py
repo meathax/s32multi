@@ -452,7 +452,7 @@ class BatchPipelineSafetyTests(unittest.TestCase):
         self.assertIn("build-seed-state.ps1", lowered)
 
     def test_merged_qsf_preserves_memory_alm_slack(self) -> None:
-        qsf = (REPO_ROOT / "Arcade-SegaSystem32.qsf").read_text(encoding="utf-8")
+        qsf = (REPO_ROOT / "Arcade-SegaSystem32Multi.qsf").read_text(encoding="utf-8")
         self.assertNotIn("S32_JT12_MLAB_SHIFTS=1", qsf)
         self.assertNotIn("S32_V25_MLAB_FIFO=1", qsf)
         self.assertNotIn("S32_V25_MLAB_EEPROM=1", qsf)
