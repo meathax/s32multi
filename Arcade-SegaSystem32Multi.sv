@@ -449,11 +449,11 @@ sdram sdram (
 
 ////////////////////////////   FRAMEBUFFER   //////////////////////////////////
 wire        fbw_start, fbw_valid, fbw_end, fbw_shadow, fbw_busy;
-wire        fbe_req, fbe_ack, fbr_req, fbr_ack;
-wire  [1:0] fbw_buf, fbe_buf, fbr_buf;
+wire        fbe_req, fbe_ack, fbr_req, fbr_ack, fbr2_req, fbr2_ack;
+wire  [1:0] fbw_buf, fbe_buf, fbr_buf, fbr2_buf;
 wire  [8:0] fbw_x, fbr_x;
-wire  [7:0] fbw_y, fbe_y, fbr_y;
-wire [15:0] fbw_pix, fbr_pix;
+wire  [7:0] fbw_y, fbe_y, fbr_y, fbr2_y;
+wire [15:0] fbw_pix, fbr_pix, fbr2_pix;
 s32_fb_if fb (
     .clk(clk_ram), .rst(reset),
     .DDRAM_BUSY(DDRAM_BUSY), .DDRAM_BURSTCNT(DDRAM_BURSTCNT),
@@ -465,7 +465,9 @@ s32_fb_if fb (
     .wr_shadow(fbw_shadow), .wr_busy(fbw_busy),
     .er_req(fbe_req), .er_buf(fbe_buf), .er_y(fbe_y), .er_ack(fbe_ack),
     .rd_req(fbr_req), .rd_buf(fbr_buf), .rd_y(fbr_y), .rd_ack(fbr_ack),
-    .rd_x(fbr_x), .rd_pix(fbr_pix)
+    .rd_x(fbr_x), .rd_pix(fbr_pix),
+    .rd2_req(fbr2_req), .rd2_buf(fbr2_buf), .rd2_y(fbr2_y),
+    .rd2_ack(fbr2_ack), .rd2_pix(fbr2_pix)
 );
 
 //////////////////////////////   INPUTS   /////////////////////////////////////
@@ -682,6 +684,8 @@ s32_core core (
     .fb_rd_req(fbr_req), .fb_rd_buf(fbr_buf),
     .fb_rd_y(fbr_y), .fb_rd_ack(fbr_ack),
     .fb_rd_x(fbr_x), .fb_rd_pix(fbr_pix),
+    .fb_rd2_req(fbr2_req), .fb_rd2_buf(fbr2_buf),
+    .fb_rd2_y(fbr2_y), .fb_rd2_ack(fbr2_ack), .fb_rd2_pix(fbr2_pix),
     .v25_prg_wr(v25_wr), .v25_prg_waddr(v25_waddr), .v25_prg_wdata(v25_wdata),
     .eep_ld_wr(eep_wr), .eep_ld_addr(eep_waddr), .eep_ld_data(eep_wdata),
     .eep_rd_data(eep_rd_data), .eep_rd_addr(eep_rd_addr),
