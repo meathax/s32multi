@@ -215,6 +215,12 @@ echo "[28/33] MAME-backed MultiPCM descriptor / pitch / pan / loop / ACK semanti
 iverilog -g2012 -o /tmp/s32_multipcm \
   rtl/audio/s32_multipcm.sv verif/common/tb_multipcm.sv
 vvp /tmp/s32_multipcm | grep -q "MULTIPCM PASS" && echo "MULTIPCM: PASS" || { echo "MULTIPCM: FAIL"; exit 1; }
+# Fixed 224-ce frame cadence under realistic SDRAM ack latency: the real
+# 315-5560 outputs at clk/224 regardless of ROM traffic. The stall-on-fetch
+# scheduler this replaces stretched the frame to 175% under load and played
+# hardware music slow and warbling.
+iverilog -g2012 -o /tmp/s32_mpcm_cad   rtl/audio/s32_multipcm.sv verif/common/tb_multipcm_cadence.sv
+vvp /tmp/s32_mpcm_cad +ACK=30 +VOICES=28 | grep -q "MULTIPCM CADENCE PASS"   && vvp /tmp/s32_mpcm_cad +ACK=20 +VOICES=8 | grep -q "MULTIPCM CADENCE PASS"   && echo "MULTIPCM CADENCE: PASS" || { echo "MULTIPCM CADENCE: FAIL"; exit 1; }
 echo "[29/33] V60 ROT/ROTC carry and active-width semantics"
 iverilog -g2012 -o /tmp/s32_v60_rotate \
   rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv verif/v60/tb_v60_rotate.sv

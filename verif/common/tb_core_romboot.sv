@@ -982,7 +982,42 @@ always @(posedge clk_sys) begin
         end
     end
 end
-// +VRAMPC: trace every VRAM write with the issuing PC, gated to a frame
+// +MPCMCAD: measure the MultiPCM output-sample cadence through the REAL
+// SDRAM path (port 4, no cache). The 315-5560 emits one stereo sample every
+// 224 ce_pcm ticks regardless of ROM traffic; the stall-on-fetch scheduler
+// this replaces stretched that to 175% under load, which is what made
+// hardware music play slow and warbling. Reports min/max/avg ce_pcm per
+// output frame plus the ROM stall profile, so a regression shows up as a
+// spread rather than a single averaged number.
+reg mpcmcad = 1'b0;
+initial mpcmcad = $test$plusargs("MPCMCAD");
+integer mp_ce = 0, mp_frames = 0, mp_sum = 0;
+integer mp_min = 999999, mp_max = 0;
+integer mp_stall_ce = 0, mp_active_max = 0;
+reg [4:0] mp_slot_d;
+integer mp_i, mp_act;
+always @(posedge clk_sys) if (mpcmcad) begin
+    mp_slot_d <= core.sound.multipcm.slot;
+    if (core.ce_pcm) begin
+        mp_ce = mp_ce + 1;
+        if (core.sound.multipcm.rom_req) mp_stall_ce = mp_stall_ce + 1;
+    end
+    // count active voices (worst case seen)
+    mp_act = 0;
+    for (mp_i = 0; mp_i < 28; mp_i = mp_i + 1)
+        if (core.sound.multipcm.s_active[mp_i]) mp_act = mp_act + 1;
+    if (mp_act > mp_active_max) mp_active_max = mp_act;
+    // frame wrap: slot 27 -> 0
+    if (core.sound.multipcm.slot == 5'd0 && mp_slot_d == 5'd27) begin
+        if (mp_frames > 2) begin   // skip startup partials
+            mp_sum = mp_sum + mp_ce;
+            if (mp_ce < mp_min) mp_min = mp_ce;
+            if (mp_ce > mp_max) mp_max = mp_ce;
+        end
+        mp_frames = mp_frames + 1;
+        mp_ce = 0;
+    end
+end
 // window (default 140-165, the observed self-test -> TEST MODE/attract
 // decision window). Finds which routine draws the TEST MODE menu instead of
 // attract and what PC decided to call it.
@@ -2743,6 +2778,20 @@ initial begin
         $display("[eep] totals: cmds=%0d writes=%0d ewen=%b",
                  eep_dbg_cmds, eep_dbg_writes, core.eeprom.ewen);
         eep_dump("final");
+    end
+    if (mpcmcad) begin
+        if (mp_frames > 3)
+            $display("[mpcmcad] frames=%0d ce/frame min=%0d max=%0d avg=%0d (ideal 224) peak_voices=%0d rom_busy_ce=%0d",
+                     mp_frames, mp_min, mp_max, mp_sum/(mp_frames-3),
+                     mp_active_max, mp_stall_ce);
+        else
+            $display("[mpcmcad] too few frames (%0d)", mp_frames);
+        if (mp_frames > 3 && (mp_min != 224 || mp_max != 224))
+            $display("MULTIPCM CADENCE FAIL (full core): min=%0d max=%0d want 224",
+                     mp_min, mp_max);
+        else if (mp_frames > 3)
+            $display("MULTIPCM CADENCE PASS (full core): 224 ce/frame exactly, peak_voices=%0d",
+                     mp_active_max);
     end
     $display("ROMBOOT DONE");
     $finish;

@@ -149,6 +149,20 @@ reg [7:0] play_mid;
 reg [21:0] play_base3;
 reg signed [21:0] acc_l, acc_r;
 
+// Per-voice sample holding registers. The real 315-5560 runs a FIXED
+// 224-clock sample frame (MAME models its stream at clk/224); ROM access is
+// interleaved into that fixed slot schedule and can never stretch it. The
+// previous implementation stalled the tick/slot counter while each SDRAM
+// fetch was outstanding, so the output sample rate sagged with voice count
+// and memory latency: measured 125%..175% frame stretch at 10..30-clk ack
+// latency with 8..28 voices (scratch/tb_mpcm_cadence.sv), heard on hardware
+// as slow, warbling music. The scheduler now free-runs; fetches are
+// best-effort into s_hold and the mixer reads s_hold at a fixed slot phase.
+// A fetch that misses its slot leaves the previous byte in s_hold for one
+// frame (a 22us first-order hold) -- fidelity degrades gracefully under
+// worst-case bus load while pitch and tempo stay exact.
+reg signed [15:0] s_hold [0:27];
+
 // Timing-driven pipeline for the per-sample mix MAC (sample*tl_gain ->
 // *env_gain -> *alfo_gain -> pan -> accumulate). The original code chained
 // all three multiplies plus the pan mux and the acc_l/acc_r adds combinationally
@@ -181,6 +195,22 @@ reg        pitch_p1_valid;
 reg [4:0]  pitch_p1_slot;
 reg [24:0] pitch_p1_step;
 reg signed [25:0] pitch_p1_delta;
+
+// Envelope-generator gain pipeline. env_step()'s internal attack/decay
+// rate-table lookup, chained straight through newvol's arithmetic into the
+// exp_vol_rom[] gain lookup in the same tick==0 cycle, measured -1.187ns at
+// Slow 100C once the cadence rewrite (s_hold/sample_will_issue) changed
+// fitter placement pressure elsewhere in this module. Register newvol's top
+// 10 bits (the exp_vol_rom index) at the end of the case block; the ROM
+// lookup and s_env_gain commit move one cycle later, in the same
+// unconditional every-clk stage already used by mac_p1/pitch_p1 above.
+// s_env_vol/s_env_state/s_active still commit same-cycle at tick==0 --
+// only the gain lookup that feeds the mix MAC is deferred, and that MAC
+// itself already runs 4 ticks later (tick==4), so this adds no audible
+// latency.
+reg        env_p1_valid;
+reg [4:0]  env_p1_slot;
+reg [9:0]  env_p1_idx;
 
 integer ri;
 integer rj;
@@ -538,6 +568,7 @@ always @(posedge clk) begin
         mac_p1_valid <= 1'b0;
         mac_p2_valid <= 1'b0;
         pitch_p1_valid <= 1'b0;
+        env_p1_valid <= 1'b0;
         play_beat2_pending <= 0;
         play_fmt12 <= 0;
         play_odd <= 0;
@@ -575,6 +606,7 @@ always @(posedge clk) begin
             s_rate_base[ri] <= 0;
             s_lfo_phase[ri] <= 0;
             s_alfo_gain[ri] <= 11'd1024;
+            s_hold[ri] <= 16'sd0;
             for (rj = 0; rj < 8; rj = rj + 1)
                 sreg[ri][rj] <= 0;
         end
@@ -668,6 +700,10 @@ always @(posedge clk) begin
                     if (key_wait[df_slot]) begin
                         s_active[df_slot] <= 1'b1;
                         s_pos[df_slot] <= 0;
+                        // Silence the holding register so the retriggered
+                        // voice does not replay one frame of its previous
+                        // sample before the first fresh fetch lands.
+                        s_hold[df_slot] <= 16'sd0;
                         key_wait[df_slot] <= 1'b0;
                         // A stage-2 position commit (see the pipeline above)
                         // may still be in flight for this same slot from
@@ -681,6 +717,11 @@ always @(posedge clk) begin
                         // into a pos_commit after this reset either.
                         if (pitch_p1_valid && pitch_p1_slot == df_slot)
                             pitch_p1_valid <= 1'b0;
+                        // Same cancellation for the envelope-gain pipeline:
+                        // a stale pre-retrigger newvol index must not land
+                        // in s_env_gain after ATTACK/vol=0 below.
+                        if (env_p1_valid && env_p1_slot == df_slot)
+                            env_p1_valid <= 1'b0;
                         // gew.cpp retrigger_sample()+envelope_generator_calc:
                         // restart the envelope from ATTACK/vol=0 and
                         // recompute the key-scaled rate base. LFO phase is
@@ -713,9 +754,10 @@ always @(posedge clk) begin
                 play_beat2_pending <= 1'b1;
             end
             else begin
-                reg signed [15:0] sample;
-                reg signed [31:0] mul1;
-                reg [6:0] tl;
+                // Sample byte lands in the holding register only; the MAC
+                // launches from s_hold at the slot's fixed mix phase
+                // (tick==4 in the ce arm below), so a late ack can never
+                // stall or skew the frame cadence.
                 // MultiPCM 8-bit samples are signed two's-complement, not
                 // unsigned/offset-binary.  Byte 80h therefore means -32768.
                 // 12-bit samples (gew.cpp sound_stream_update, format&4):
@@ -724,23 +766,11 @@ always @(posedge clk) begin
                 // the shared middle byte fetched on the first beat; rom_data
                 // here is the second (outer) byte.
                 if (play_fmt12)
-                    sample = play_odd ? {rom_data, play_mid[7:4], 4'h0}
-                                       : {rom_data, play_mid[3:0], 4'h0};
+                    s_hold[play_slot] <= play_odd
+                        ? {rom_data, play_mid[7:4], 4'h0}
+                        : {rom_data, play_mid[3:0], 4'h0};
                 else
-                    sample = {rom_data, 8'h00};
-
-                tl = sreg[play_slot][5][7:1];
-                // Real 7-bit-indexed TL attenuation table (gew.cpp's
-                // -24dB/64-step total-level curve) replacing the former
-                // coarse ">> (tl>>4)" shift. Pipeline stage 0/3: this is the
-                // only multiply done in the ROM-ack cycle itself; *env_gain
-                // and *alfo_gain are deferred to mac_p1/mac_p2 below so no
-                // clk_sys edge ever sees more than one DSP multiply plus a
-                // shift on this path (see the pipeline note by acc_l/acc_r).
-                mul1 = sample * $signed({1'b0, tl_gain_rom[tl]});
-                mac_p1_valid <= 1'b1;
-                mac_p1_slot  <= play_slot;
-                mac_p1_val   <= mul1 >>> 10;
+                    s_hold[play_slot] <= {rom_data, 8'h00};
             end
         end
 
@@ -779,7 +809,47 @@ always @(posedge clk) begin
         end
 
         if (ce) begin
-            if (!df_busy && desc_pending != 0) begin
+            reg sample_will_issue;
+            // Will the tick==0 voice logic below claim the ROM port on this
+            // edge? Arbitration must skip this edge so two writers never
+            // race rom_addr/rom_is_desc (the sample issue is later in
+            // program order and would silently clobber a descriptor beat).
+            sample_will_issue = (tick == 3'd0) && s_active[slot] && !rom_req &&
+                                !df_busy && !play_beat2_pending;
+
+            // Fixed 224-ce frame cadence: tick/slot advance every ce and are
+            // never gated by ROM traffic (see the s_hold note above). The
+            // real 315-5560's sample rate is clk/224 regardless of fetch
+            // activity; the previous stall-on-fetch scheduler stretched the
+            // frame by up to 175% under load (measured, tb_mpcm_cadence).
+            tick <= tick + 1'b1;
+            if (tick == 3'd7) begin
+                tick <= 0;
+                if (slot == 5'd27) begin
+                    slot <= 0;
+                    out_l <= clamp16(acc_l >>> 2);
+                    out_r <= clamp16(acc_r >>> 2);
+                    acc_l <= 0;
+                    acc_r <= 0;
+                end
+                else slot <= slot + 1'b1;
+            end
+
+            // MAC stage 0 at the slot's fixed mix phase, from the holding
+            // register. tick==4 gives a same-frame fresh byte whenever the
+            // fetch issued at this slot's tick==0 acks within ~19 clk;
+            // slower acks mix the previous frame's byte (a 22us hold).
+            if (tick == 3'd4 && s_active[slot]) begin
+                reg signed [31:0] mul1;
+                mul1 = s_hold[slot] *
+                       $signed({1'b0, tl_gain_rom[sreg[slot][5][7:1]]});
+                mac_p1_valid <= 1'b1;
+                mac_p1_slot  <= slot;
+                mac_p1_val   <= mul1 >>> 10;
+            end
+
+            if (!sample_will_issue && !df_busy && desc_pending != 0 &&
+                !rom_req && !play_beat2_pending) begin
                 reg found;
                 reg [4:0] picked;
                 found = 1'b0;
@@ -796,34 +866,17 @@ always @(posedge clk) begin
                 df_busy <= 1'b1;
                 desc_pending[picked] <= 1'b0;
             end
-            else if (df_busy) begin
-                if (!rom_req) begin
-                    rom_req <= 1'b1;
-                    rom_is_desc <= 1'b1;
-                    rom_addr <= (df_sample * 22'd12) + {18'd0, df_idx};
-                end
+            else if (!sample_will_issue && df_busy && !rom_req) begin
+                rom_req <= 1'b1;
+                rom_is_desc <= 1'b1;
+                rom_addr <= (df_sample * 22'd12) + {18'd0, df_idx};
             end
-            else if (play_beat2_pending) begin
-                if (!rom_req) begin
-                    rom_req <= 1'b1;
-                    rom_is_desc <= 1'b0;
-                    rom_addr <= banked(play_base3 + (play_odd ? 22'd2 : 22'd0));
-                    play_beat2_pending <= 1'b0;
-                end
+            else if (!sample_will_issue && play_beat2_pending && !rom_req) begin
+                rom_req <= 1'b1;
+                rom_is_desc <= 1'b0;
+                rom_addr <= banked(play_base3 + (play_odd ? 22'd2 : 22'd0));
+                play_beat2_pending <= 1'b0;
             end
-            else if (!rom_req) begin
-                tick <= tick + 1'b1;
-                if (tick == 3'd7) begin
-                    tick <= 0;
-                    if (slot == 5'd27) begin
-                        slot <= 0;
-                        out_l <= clamp16(acc_l >>> 2);
-                        out_r <= clamp16(acc_r >>> 2);
-                        acc_l <= 0;
-                        acc_r <= 0;
-                    end
-                    else slot <= slot + 1'b1;
-                end
 
                 if (tick == 0 && s_active[slot]) begin
                     reg [9:0] pitch;
@@ -876,26 +929,33 @@ always @(posedge clk) begin
                     else
                         s_alfo_gain[slot] <= 11'd1024;
 
-                    play_slot <= slot;
-                    play_fmt12 <= s_fmt12[slot];
-                    play_odd <= s_pos[slot][16];
-                    rom_req <= 1'b1;
-                    rom_is_desc <= 1'b0;
-                    if (s_fmt12[slot]) begin
-                        // First beat fetches the shared nibble byte (adr+1);
-                        // see the rom_beat12 branch above for the second
-                        // beat (adr for even samples, adr+2 for odd) and the
-                        // mixing branch for the final 12-bit assembly.
-                        base3_comb = s_start[slot] +
-                            (s_pos[slot][37:17] * 22'd3);
-                        play_base3 <= base3_comb;
-                        rom_beat12 <= 1'b1;
-                        rom_addr <= banked(base3_comb + 22'd1);
+                    if (sample_will_issue) begin
+                        play_slot <= slot;
+                        play_fmt12 <= s_fmt12[slot];
+                        play_odd <= s_pos[slot][16];
+                        rom_req <= 1'b1;
+                        rom_is_desc <= 1'b0;
+                        if (s_fmt12[slot]) begin
+                            // First beat fetches the shared nibble byte
+                            // (adr+1); see the rom_beat12 branch above for
+                            // the second beat (adr for even samples, adr+2
+                            // for odd) and the ack branch for the 12-bit
+                            // assembly into s_hold.
+                            base3_comb = s_start[slot] +
+                                (s_pos[slot][37:17] * 22'd3);
+                            play_base3 <= base3_comb;
+                            rom_beat12 <= 1'b1;
+                            rom_addr <= banked(base3_comb + 22'd1);
+                        end
+                        else begin
+                            rom_beat12 <= 1'b0;
+                            rom_addr <= banked(s_start[slot] +
+                                               s_pos[slot][37:16]);
+                        end
                     end
-                    else begin
-                        rom_beat12 <= 1'b0;
-                        rom_addr <= banked(s_start[slot] + s_pos[slot][37:16]);
-                    end
+                    // else: ROM port busy this edge -- skip this frame's
+                    // fetch; s_hold keeps the previous byte and the position
+                    // still advances, so tempo and pitch are unaffected.
 
                     // --- Envelope generator: one update per voice per
                     // output-sample tick, matching gew.cpp's
@@ -938,7 +998,9 @@ always @(posedge clk) begin
                                 s_active[slot] <= 1'b0;
                         end
                     endcase
-                    s_env_gain[slot] <= exp_vol_rom[newvol[25:16]];
+                    env_p1_valid <= 1'b1;
+                    env_p1_slot  <= slot;
+                    env_p1_idx   <= newvol[25:16];
                 end
 
                 // Pitch-LFO pipeline stage 2/2 (see pitch_p1_valid's
@@ -965,6 +1027,15 @@ always @(posedge clk) begin
                     pos_commit_end16    <= {21'd0, s_end[pitch_p1_slot]} << 16;
                 end
 
+                // Envelope-generator gain pipeline stage 2 (see env_p1_valid's
+                // declaration): the exp_vol_rom lookup that was too deep to
+                // share tick==0 with env_step()'s own rate-table chain. One
+                // ce-tick later, same margin as pos_commit's stages.
+                if (env_p1_valid) begin
+                    env_p1_valid <= 1'b0;
+                    s_env_gain[env_p1_slot] <= exp_vol_rom[env_p1_idx];
+                end
+
                 // Stage 3 of the s_pos position-update pipeline (see the
                 // declarations above): one clk_sys cycle after the pitch-LFO
                 // stage above registered the raw add, do the loop-wrap
@@ -981,7 +1052,6 @@ always @(posedge clk) begin
                             {4'd0, pos_commit_loop_span};
                     s_pos[pos_commit_slot] <= committed_pos;
                 end
-            end
         end
     end
 end
