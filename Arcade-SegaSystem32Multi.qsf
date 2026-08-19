@@ -142,7 +142,15 @@ set_global_assignment -name ALM_REGISTER_PACKING_EFFORT MEDIUM
 # chain tb_mixer_pixel_latency.sv holds to a proven 12-clk_ram-edge budget,
 # so pipelining it was not an option without regression risk; seed 5 is the
 # real fix here. Keeping seed 5.
-set_global_assignment -name SEED 5
+# 2026-08-19 button-map rewiring (music keys to P2_A/P2_B, dedicated
+# Accelerate/Brake buttons): netlist shifted again, seed 5 now misses in the
+# vendored ascal framework scaler (-0.107/-0.038 ns Slow corners) -- pure
+# placement noise in framework code we do not modify. Seed re-exploration.
+# Seed 6 closes all 4 STA corners: Slow 100C +0.109/+0.230, Slow -40C
+# +0.092/+0.141, Fast 100C +2.284/+0.133, Fast -40C +2.575/+0.099 (setup/hold
+# ns). 0 errors, 0 warnings. Bit-identical RBF hash reproducibility confirmed
+# (CleanGenerated + full compile matched the first pass, af633a43...9046).
+set_global_assignment -name SEED 6
 # 2026-08-13: dropped from 8 to 2.  At 8, quartus_map and quartus_fit both died
 # with `*** Fatal Error: Access Violation` on this host; the fitter's stack
 # trace named deeply recursive TIS_ADVANCED_SPICE_RC_BODY::annotate_delay_tree
