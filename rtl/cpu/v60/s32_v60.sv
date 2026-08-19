@@ -1012,9 +1012,14 @@ function automatic [4:0] imm_len(input [1:0] d);
     imm_len = (d==2'd0) ? 5'd1 : (d==2'd1) ? 5'd2 : 5'd4;
 endfunction
 
-// autoinc step
+// autoinc step. dim 3 = qword (MOVD): the V60 steps autoincrement/
+// autodecrement by the full 8-byte operand (MAME v60 m_moddim==3).
+// OutRunners' boot RAM-clear (`mov.d R0,[R10+]` x4, dbr) stepped R10 by 4
+// under the old word default, halving the cleared range and overlapping
+// every store (found with tb_v60_movd; see the MOVD note in S_IF2).
 function automatic [31:0] dim_step(input [1:0] d);
-    dim_step = (d==2'd0) ? 32'd1 : (d==2'd1) ? 32'd2 : 32'd4;
+    dim_step = (d==2'd0) ? 32'd1 : (d==2'd1) ? 32'd2 :
+               (d==2'd3) ? 32'd8 : 32'd4;
 endfunction
 
 // ---------------------------------------------------------------------------
@@ -1746,7 +1751,18 @@ else if (ce) begin
                 // and the on-scale character never rendered. f12_op1_is_addr
                 // already classifies XCH op1 as an address for the F1/F2-D=1
                 // paths; this closes the F2-D=0 gap. (encoding 45 53 74)
-                if (cur_op == 8'h41 || cur_op == 8'h43 || cur_op == 8'h45) begin
+                // MOVD (3f) has the same F2-D=0 gap as XCH: its op1 is the
+                // register-pair NUMBER (exec reads r[op1] and r[op1+1] when
+                // flag1=1). The generic value path left flag1=0, so exec's
+                // memory-source branch dereferenced R0's VALUE as the qword
+                // address; OutRunners' boot RAM-clear (`mov.d R0,[R10+]` at
+                // 0x5AE, R0=0) then copied the reset-vector instruction bytes
+                // over 0x20E000+ instead of zeroing it, leaving the test-menu
+                // request byte at 0x20E700 as power-up junk -- the game
+                // booted into TEST MODE on every cold start (found by
+                // MAME-trace/PC-stream set-diff; directed test tb_v60_movd).
+                if (cur_op == 8'h41 || cur_op == 8'h43 || cur_op == 8'h45 ||
+                    cur_op == 8'h3f) begin
                     op1   <= {27'b0, instflags[4:0]};
                     flag1 <= 1'b1;
                 end
@@ -3901,6 +3917,9 @@ function automatic [1:0] f12_dim1(input [7:0] op);
             f12_dim1 = 2'd1;
         // A7: MULX/MULUX/DIVX/DIVUX first operand is word (64-bit datapath)
         8'h86, 8'h96, 8'ha6, 8'hb6: f12_dim1 = 2'd2;
+        // MOVD: qword operand -- autoincrement/indexed AMs must step/scale
+        // by 8 (dim encoding 3; see dim_step)
+        8'h3f: f12_dim1 = 2'd3;
         8'ha9, 8'hab, 8'had, 8'hb9, 8'hbb, 8'hbd, 8'h89, 8'h8b, 8'h8d,
         8'h99, 8'h9b, 8'h9d: f12_dim1 = 2'd0;  // shift/rot counts are byte
         default: f12_dim1 = 2'd2;
@@ -3908,6 +3927,8 @@ function automatic [1:0] f12_dim1(input [7:0] op);
 endfunction
 function automatic [1:0] f12_dim2(input [7:0] op);
     casez (op)
+        // MOVD: qword destination -- [Rn+] steps by 8 (dim encoding 3)
+        8'h3f: f12_dim2 = 2'd3;
         8'h09, 8'h19, 8'h29, 8'h38, 8'h39, 8'h41, 8'h50, 8'h51,
         8'h80, 8'h81, 8'h88, 8'h90, 8'h91, 8'h98, 8'ha0, 8'ha1,
         8'ha8, 8'hb0, 8'hb1, 8'hb8, 8'h89, 8'h99, 8'ha9, 8'hb9,
