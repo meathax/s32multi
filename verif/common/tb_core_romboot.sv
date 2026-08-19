@@ -629,6 +629,74 @@ always @(posedge clk_sys) begin
 end
 `endif
 
+// +EEPDBG: EEPROM serial-protocol trace.  OutRunners boots to TEST MODE in
+// this core while MAME (same blank 0xFFFF EEPROM, no default image in
+// segas32.cpp ROM_START(orunners)) reaches attract, so the question is
+// whether the game's backup-data initialisation actually lands in our
+// 93C46 model.  Logs every command decoded, every committed word write and
+// the EWEN latch, then dumps the whole array so the result can be compared
+// against MAME's post-boot contents (which begin 0053 0033 0032 0041 =
+// "S32A").
+reg eepdbg = 1'b0;
+integer eep_dbg_cmds = 0;
+integer eep_dbg_writes = 0;
+integer eep_dbg_i;
+initial eepdbg = $test$plusargs("EEPDBG");
+
+task automatic eep_dump(input [255:0] label);
+    integer d;
+    begin
+        $write("[eep] %0s contents:", label);
+        for (d = 0; d < 64; d = d + 1) begin
+            if (d % 16 == 0) $write("\n[eep]  %02x:", d);
+            $write(" %04x", ~core.eeprom.storage.mem[d]);
+        end
+        $write("\n");
+    end
+endtask
+
+always @(posedge clk_sys) if (eepdbg) begin
+    // Command decode point: same condition the RTL uses to latch an opcode.
+    if (!rst && core.eeprom.cs && core.eeprom.sk && !core.eeprom.sk_d &&
+        core.eeprom.es == 3'd1 && core.eeprom.bitcnt == 4'd7) begin
+        eep_dbg_cmds = eep_dbg_cmds + 1;
+        if (eep_dbg_cmds <= 60)
+            $display("[eep] f=%0d CMD op=%b addr=%02x ewen=%b busy=%b",
+                     cur_frame, {core.eeprom.sr[6:5]},
+                     {core.eeprom.sr[4:0], core.eeprom.di},
+                     core.eeprom.ewen, core.eeprom.busy);
+    end
+    if (core.eeprom.serial_wr) begin
+        eep_dbg_writes = eep_dbg_writes + 1;
+        if (eep_dbg_writes <= 80)
+            $display("[eep] f=%0d WRITE addr=%02x data=%04x",
+                     cur_frame, core.eeprom.serial_wr_addr,
+                     core.eeprom.serial_wr_data);
+    end
+end
+
+// +TMDBG: why does this core drop into TEST MODE after the NETWORK CHECK
+// screen while MAME (same ROMs, same blank EEPROM) goes straight to attract?
+// MAME's work-RAM word 0x20E100 is 0000 on every frame 25..1000 in attract
+// and 8080 while the TEST switch is held, so it is the game's own
+// "in test mode" flag.  Watch it here alongside the two things that can
+// legitimately set it: io0's direction register (a stray dir[5]=1 would make
+// port F read its output latch, i.e. all-zero => TEST+SERVICE asserted) and
+// the actual value the CPU reads back from io0 port F (SERVICE34_A, TEST on
+// bit 5, EEPROM DO on bit 7).
+reg tmdbg = 1'b0;
+reg  [7:0] pf_last = 8'hff;
+reg  [7:0] pf_min  = 8'hff;   // AND of every port-F read: sticks low bits
+integer    pf_reads = 0;
+initial tmdbg = $test$plusargs("TMDBG");
+always @(posedge clk_sys) begin
+    if (core.io0.cs && !core.io0.we && core.io0.addr[4:0] == 5'h5) begin
+        pf_last <= core.io0.rdata;
+        pf_min  <= pf_min & core.io0.rdata;
+        pf_reads <= pf_reads + 1;
+    end
+end
+
 // +FASTV60 selects the production wide instruction-fetch transport for a
 // boot run; default keeps the shared-bus PCB path so both transports can be
 // A/B'd against the same ROM image.
@@ -914,6 +982,85 @@ always @(posedge clk_sys) begin
         end
     end
 end
+// +VRAMPC: trace every VRAM write with the issuing PC, gated to a frame
+// window (default 140-165, the observed self-test -> TEST MODE/attract
+// decision window). Finds which routine draws the TEST MODE menu instead of
+// attract and what PC decided to call it.
+reg vrampc = 1'b0;
+integer vrampc_lo, vrampc_hi;
+integer vrampc_n = 0;
+initial begin
+    vrampc = $test$plusargs("VRAMPC");
+    if (!$value$plusargs("VRAMPCLO=%d", vrampc_lo)) vrampc_lo = 140;
+    if (!$value$plusargs("VRAMPCHI=%d", vrampc_hi)) vrampc_hi = 165;
+end
+// Any accepted CPU read of io0/io1/eeprom during the decision window, with PC.
+integer ioreadpc_n = 0;
+always @(posedge clk_sys) begin
+    if (vrampc && cur_frame >= vrampc_lo && cur_frame <= vrampc_hi &&
+        core.m_req && core.m_ack && !core.m_we && !core.ack_d &&
+        (core.sel_io0 || core.sel_io1) && ioreadpc_n < 200000) begin
+        ioreadpc_n = ioreadpc_n + 1;
+        $display("[iorpc] f=%0d pc=%08x io%0d addr=%02x data=%04x",
+            cur_frame, core.v60.pc, core.sel_io1, core.A[5:1], core.m_rdata);
+    end
+end
+// EEPROM state-machine activity in the decision window: any es transition
+// (state register change is always reliable to watch, unlike combinational
+// cs/sk sampling) tells us if the game re-reads the EEPROM right before
+// drawing the TEST MODE screen instead of attract.
+reg [2:0] eep_es_d;
+integer eepact_n = 0;
+always @(posedge clk_sys) begin
+    eep_es_d <= core.eeprom.es;
+    if (vrampc && cur_frame >= vrampc_lo && cur_frame <= vrampc_hi &&
+        core.eeprom.es != eep_es_d && eepact_n < 20000) begin
+        eepact_n = eepact_n + 1;
+        $display("[eepact] f=%0d pc=%08x es %0d->%0d eaddr=%02x cs=%b di=%b sk=%b",
+            cur_frame, core.v60.pc, eep_es_d, core.eeprom.es,
+            core.eeprom.eaddr, core.eeprom.cs, core.eeprom.di, core.eeprom.sk);
+    end
+end
+// +ZRSTDBG: why does the sound Z80 never execute? Log every io0 CNT-register
+// write (value + PC), plus once-per-frame cnt2 / z80 reset levels.
+reg zrstdbg = 1'b0;
+initial zrstdbg = $test$plusargs("ZRSTDBG");
+integer zrst_n = 0;
+always @(posedge clk_sys) if (zrstdbg) begin
+    if (core.io0.cs && core.io0.we && core.io0.addr[4:0] == 5'he &&
+        zrst_n < 200) begin
+        zrst_n = zrst_n + 1;
+        $display("[zrst] f=%0d pc=%08x CNT write=%02x", cur_frame,
+            core.v60.pc, core.m_wdata[7:0]);
+    end
+end
+reg zrst_vs_d;
+always @(posedge clk_sys) if (zrstdbg) begin
+    zrst_vs_d <= vs;
+    if (vs && !zrst_vs_d)
+        $display("[zrstf] f=%0d cnt2=%b z80_reset_in=%b zrom_req=%b m1_n=%b",
+            cur_frame, core.io0_cnt2, ~core.io0_cnt2,
+            core.sound.zrom_req, core.sound.z_m1_n);
+end
+// +PCTRACE: write the executed-PC stream (every v60 pc change) for frames
+// [PCTRLO..PCTRHI] to pctrace.txt. Used to set-diff our executed path
+// against a MAME debugger trace of the same boot window.
+reg pctrace = 1'b0;
+integer pctr_lo, pctr_hi, pctr_fd = 0;
+reg [31:0] pctr_last = 32'hffffffff;
+initial begin
+    pctrace = $test$plusargs("PCTRACE");
+    if (!$value$plusargs("PCTRLO=%d", pctr_lo)) pctr_lo = 140;
+    if (!$value$plusargs("PCTRHI=%d", pctr_hi)) pctr_hi = 148;
+    if (pctrace) pctr_fd = $fopen("pctrace.txt", "w");
+end
+always @(posedge clk_sys) begin
+    if (pctrace && pctr_fd != 0 && cur_frame >= pctr_lo &&
+        cur_frame <= pctr_hi && core.v60.pc != pctr_last) begin
+        pctr_last <= core.v60.pc;
+        $fdisplay(pctr_fd, "%0d %08x", cur_frame, core.v60.pc);
+    end
+end
 integer snd_rom_reqs = 0, snd_opcodes = 0;
 integer snd_bank_lo = 0, snd_bank_hi = 0;
 integer snd_fm1 = 0, snd_fm2 = 0, snd_rfreg = 0, snd_rfram = 0;
@@ -926,7 +1073,16 @@ always @(posedge clk_sys) begin
     if (core.m_req && core.m_ack && core.m_we && !core.ack_d) begin
         case (core.A[23:20])
             4'h2: n_wram_wr = n_wram_wr + 1;
-            4'h3: n_vram_wr = n_vram_wr + 1;
+            4'h3: begin
+                n_vram_wr = n_vram_wr + 1;
+                if (vrampc && cur_frame >= vrampc_lo && cur_frame <= vrampc_hi &&
+                    vrampc_n < 400000) begin
+                    vrampc_n = vrampc_n + 1;
+                    $display("[vrampc] f=%0d pc=%08x addr=%06x data=%04x be=%b",
+                        cur_frame, core.v60.pc, {core.A[23:1],1'b0},
+                        core.m_wdata, core.m_be);
+                end
+            end
             4'h4: n_spr_wr  = n_spr_wr + 1;
             4'h6: begin
                 n_pal_wr = n_pal_wr + 1;
@@ -2477,6 +2633,10 @@ initial begin
         // MAME disassembly of the 0x600A7 credit routine):
         //   credits 0x20AC81, test-mode 0x20B1D0, free-play 0x20AC7A,
         //   coin raw 0x20AC40 / old 0x20AC41 / release-edge 0x20AC43
+        if (tmdbg)
+            $display("   tm: e100=%04x io0dir=%02x io1dir=%02x pf_last=%02x pf_and=%02x pf_reads=%0d svc34=%02x",
+                core.work_ram.mem['h7080], core.io0.dir, core.io1.dir,
+                pf_last, pf_min, pf_reads, 8'hff);
         $display("   coin: cr(ac81)=%02x test(b1d0)=%02x fp(ac7a)=%02x raw40=%02x old41=%02x reledge43=%02x",
             core.work_ram.mem['h5640][15:8], core.work_ram.mem['h58e8][7:0],
             core.work_ram.mem['h563d][7:0], core.work_ram.mem['h5620][7:0],
@@ -2579,6 +2739,11 @@ initial begin
         fb_max_wr_wait, fb_max_rd_wait, fb_max_er_wait,
         frame_sig_samples, frame_sig_changes);
 `endif
+    if (eepdbg) begin
+        $display("[eep] totals: cmds=%0d writes=%0d ewen=%b",
+                 eep_dbg_cmds, eep_dbg_writes, core.eeprom.ewen);
+        eep_dump("final");
+    end
     $display("ROMBOOT DONE");
     $finish;
 end
