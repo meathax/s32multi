@@ -1,5 +1,9 @@
 // System 32 driving-cabinet input adapters.
 // MiSTer analog-stick axes are signed -128..+127 with zero at rest.
+// Steering: left-stick X, deadzoned, with dpad left/right as a full-deflection
+// digital fallback when no analog stick is present. Pedals: right-stick Y
+// split into accel(up)/brake(down), with two assignable digital buttons as
+// full-scale fallbacks.
 module s32_driving_controls (
     input         clk,
     input         rst,
@@ -9,6 +13,8 @@ module s32_driving_controls (
     input   [7:0] right_y,
     input         digital_accel,
     input         digital_brake,
+    input         digital_left,
+    input         digital_right,
     output  [7:0] wheel,
     output  [7:0] accel,
     output  [7:0] brake
@@ -59,7 +65,12 @@ module s32_driving_controls (
     // complete out-and-back motion. Retain the strongest excursion between
     // channel-0 loads, then present the latest coordinate on the following
     // load. Other driving sets keep the direct positional path.
-    assign wheel = (capture_wheel && wheel_pending_valid)
+    // Digital d-pad steering (no analog stick present) overrides the analog
+    // path entirely, same priority as the digital accel/brake fallbacks
+    // below. Full deflection saturates the 8-bit ADC endpoint.
+    assign wheel = digital_right ? 8'hff :
+                   digital_left  ? 8'h00 :
+                   (capture_wheel && wheel_pending_valid)
                  ? wheel_pending : wheel_live;
 
     always @(posedge clk) begin
