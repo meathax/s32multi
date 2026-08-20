@@ -770,7 +770,7 @@ assign fb_rd2_y   = fb_rd2_y_r;
 // mix0 (screen A) reads lane A's fetched line; mix1 (screen B) reads its own
 // independent lane B fetch (fb_rd2_*, above). Both lanes fetch every frame
 // regardless of which screen is currently displayed -- required so the
-// splitscreen composer (side-by-side/stacked) can show both simultaneously.
+// side-by-side splitscreen composer can show both simultaneously.
 wire [15:0] fb_rd_pix_b = fb_rd2_pix;
 `ifdef S32_UNIVERSAL_DISABLED
 `define S32_MIX_PIX_PIPE

@@ -169,7 +169,7 @@ localparam CONF_STR = {
     "-;",
 `ifndef S32_SYSTEM32_ONLY
     "O[6],Screen (Multi32),A,B;",
-    "O[38],Splitscreen (Multi32),Off,On;",
+    "O[38],Splitscreen,Off,On;",
 `endif
     "O[7],Service Mode,Off,On;",
     // status[8], status[30:34], status[36:37] were the lightgun/GunCon SNAC
