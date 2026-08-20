@@ -170,6 +170,8 @@ module s32_core #(
     output     [23:0] rgb_b,
     output            ce_pix,
     output            hs, vs, hb, vb,
+    output      [8:0] hcnt_o, vcnt_o,   // native raster position, for the
+                                         // top-level splitscreen composer
     output            mode_416_active,
 
     output signed [15:0] audio_l,
@@ -449,6 +451,8 @@ s32_video crt (
     .hblank(hb), .vblank(vb), .hsync(hs), .vsync(vs),
     .vblank_start(vbl_start), .vblank_end(vbl_end)
 );
+assign hcnt_o = hcnt;
+assign vcnt_o = vcnt;
 
 // tilemap engine (clk_ram domain; registers quasi-static)
 wire        tm_lb_we;
@@ -723,13 +727,9 @@ always @(posedge clk_ram) begin
             // is fetched.
             fb_rd_buf_r <= spr_scan_buf_a;
             // CRT lines are 0..261. Truncating line 261 before adding produced
-            // line 6 instead of the next frame's line 0.
-            if (vcnt == 9'd261)
-                fb_rd_y_r <= cfg_flip_y ? 8'd223 : 8'd0;
-            else if (cfg_flip_y && vcnt < 9'd223)
-                fb_rd_y_r <= 8'd222 - vcnt[7:0];
-            else
-                fb_rd_y_r <= vcnt[7:0] + 8'd1;
+            // line 6 instead of the next frame's line 0. Shared with lane B's
+            // identical mux below via fb_next_y.
+            fb_rd_y_r <= fb_next_y;
         end
     end
 end
@@ -758,12 +758,7 @@ always @(posedge clk_ram) begin
         else if (!fb_rd2_ack && fb_rd_kick) begin
             fb_rd2_req_r <= 1'b1;
             fb_rd2_buf_r <= spr_scan_buf_b;
-            if (vcnt == 9'd261)
-                fb_rd2_y_r <= cfg_flip_y ? 8'd223 : 8'd0;
-            else if (cfg_flip_y && vcnt < 9'd223)
-                fb_rd2_y_r <= 8'd222 - vcnt[7:0];
-            else
-                fb_rd2_y_r <= vcnt[7:0] + 8'd1;
+            fb_rd2_y_r <= fb_next_y;
         end
     end
 end

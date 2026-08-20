@@ -370,6 +370,12 @@ wire        fbw_shadow;
 wire        fbw_busy, fbe_ack, fbr_ack;
 wire [15:0] fbr_pix;
 
+// second (Multi32 screen-B) sprite read lane
+wire        fbr2_req, fbr2_ack;
+wire  [1:0] fbr2_buf;
+wire  [7:0] fbr2_y;
+wire [15:0] fbr2_pix;
+
 integer fbr_accepts = 0;
 reg [1:0] fbr_buf_l;
 reg [7:0] fbr_y_l;
@@ -398,6 +404,8 @@ s32_fb_ddr_model fb_service (
     .er_req(fbe_req), .er_buf(fbe_buf), .er_y(fbe_y), .er_ack(fbe_ack),
     .rd_req(fbr_req), .rd_buf(fbr_buf), .rd_y(fbr_y), .rd_ack(fbr_ack),
     .rd_x(fbr_x), .rd_pix(fbr_pix),
+    .rd2_req(fbr2_req), .rd2_buf(fbr2_buf), .rd2_y(fbr2_y),
+    .rd2_ack(fbr2_ack), .rd2_pix(fbr2_pix),
     .write_accepts(fb_ddr_writes), .read_accepts(fb_ddr_reads),
     .line_acks(fb_line_acks),
     .max_wr_wait(fb_max_wr_wait), .max_rd_wait(fb_max_rd_wait),
@@ -728,6 +736,8 @@ s32_core core (
     .fb_rd_req(fbr_req), .fb_rd_buf(fbr_buf),
     .fb_rd_y(fbr_y), .fb_rd_ack(fbr_ack),
     .fb_rd_x(fbr_x), .fb_rd_pix(fbr_pix),
+    .fb_rd2_req(fbr2_req), .fb_rd2_buf(fbr2_buf),
+    .fb_rd2_y(fbr2_y), .fb_rd2_ack(fbr2_ack), .fb_rd2_pix(fbr2_pix),
     .v25_prg_wr(1'b0), .v25_prg_waddr(16'h0), .v25_prg_wdata(8'h0),
     .eep_ld_wr(eep_ld_wr), .eep_ld_addr(eep_ld_addr), .eep_ld_data(eep_ld_data),
     .eep_rd_addr(6'h0),
@@ -738,8 +748,29 @@ s32_core core (
     .in_svc12_b(8'hff), .in_svc34_b(8'hff),
     .adc_ch(adc_a),
     .ppi_pa(8'hff), .ppi_pb(8'hff), .ppi_pc(8'hff),
-    .rgb_a(rgb_a), .rgb_b(), .ce_pix(ce_pix), .hs(hs), .vs(vs), .hb(hb), .vb(vb),
+    .rgb_a(rgb_a), .rgb_b(rgb_b), .ce_pix(ce_pix), .hs(hs), .vs(vs), .hb(hb), .vb(vb),
+    .hcnt_o(core_hcnt), .vcnt_o(),
+    .mode_416_active(core_mode_416),
     .audio_l(audio_l), .audio_r(audio_r), .out_lamps()
+);
+
+// --- splitscreen composer: same block s32_core's dual-lane fb fetch and
+// pal1/mix1 (Multi32) already feed in the real top level. Wired here purely
+// to capture real-boot PPM frames of the composed output (+SPLITDUMPAT
+// below); does not affect the existing rgb_a-only dump path above.
+wire [23:0] rgb_b;
+wire [8:0]  core_hcnt;
+wire        core_mode_416;
+wire [23:0] split_rgb;
+wire        split_ce_pix, split_hb, split_vb;
+s32_splitscreen_composer u_split_dbg (
+    .clk(clk_sys), .rst(rst), .mode_416_active(core_mode_416),
+    .rgb_a(rgb_a), .rgb_b(rgb_b),
+    .hcnt(core_hcnt), .ce_pix_native(ce_pix),
+    .vblank_native(vb), .vsync_native(vs),
+    .rgb_out(split_rgb), .ce_pix_out(split_ce_pix),
+    .hsync_out(), .vsync_out(),
+    .hblank_out(split_hb), .vblank_out(split_vb)
 );
 
 // MAME's v60_device::device_start() gives R0..R30 a deterministic zero
@@ -1348,6 +1379,65 @@ integer native5_frame = -1;
 reg native5_enabled = 0, native5_only = 0, native5_dumping = 0;
 reg native5_complete = 0, native5_nonblack_seen = 0;
 reg require_verilator_native5 = 0;
+// composed-splitscreen frame capture: +SPLITDUMPAT=<frame#> (+SPLITDUMPN=
+// <count>, default 1) writes the composer's doubled-width output (screen A
+// then screen B, side by side) as dumpsplit<frame>.ppm -- independent of
+// the rgb_a-only capture above, doesn't touch it.
+integer split_dump_at, split_dump_n, split_dump_fd = 0;
+integer split_dump_x, split_dump_y;
+reg split_dumping = 0;
+integer split_dump_nonblack = 0;
+integer split_width = 0;
+reg split_hb_d = 0;
+initial begin
+    if (!$value$plusargs("SPLITDUMPAT=%d", split_dump_at)) split_dump_at = -1;
+    if (!$value$plusargs("SPLITDUMPN=%d", split_dump_n)) split_dump_n = 1;
+end
+always @(posedge clk_sys) begin
+    if (vb & ~vb_d) begin
+        if (split_dumping) begin
+            while (split_dump_y < 224) begin
+                for (split_dump_x = 0; split_dump_x < split_width; split_dump_x = split_dump_x + 1)
+                    $fwrite(split_dump_fd, "0 0 0\n");
+                split_dump_y = split_dump_y + 1;
+            end
+            $fclose(split_dump_fd);
+            split_dumping = 0;
+            $display("[splitdump] wrote frame %0d width=%0d nonblack=%0d",
+                     cur_frame - 1, split_width, split_dump_nonblack);
+        end
+        if (split_dump_at >= 0 && cur_frame >= split_dump_at &&
+            cur_frame < split_dump_at + split_dump_n) begin
+            split_width = core_mode_416 ? 832 : 640;
+            split_dump_fd = $fopen($sformatf("dumpsplit%0d.ppm", cur_frame), "w");
+            if (split_dump_fd == 0)
+                $fatal(1, "SPLIT SCREENSHOT FAIL: cannot create dumpsplit%0d.ppm", cur_frame);
+            $fwrite(split_dump_fd, "P3\n%0d 224\n255\n", split_width);
+            split_dump_x = 0;
+            split_dump_y = 0;
+            split_dump_nonblack = 0;
+            split_dumping = 1;
+        end
+    end
+    split_hb_d <= split_hb;
+    if (split_dumping && split_hb & ~split_hb_d && split_dump_x != 0) begin
+        while (split_dump_x < split_width) begin
+            $fwrite(split_dump_fd, "0 0 0\n");
+            split_dump_x = split_dump_x + 1;
+        end
+        split_dump_x = 0;
+        split_dump_y = split_dump_y + 1;
+    end
+    if (split_dumping && split_ce_pix && !split_hb && !split_vb && split_dump_y < 224) begin
+        if (split_dump_x < split_width) begin
+            $fwrite(split_dump_fd, "%0d %0d %0d\n",
+                    split_rgb[23:16], split_rgb[15:8], split_rgb[7:0]);
+            if (split_rgb != 24'h000000) split_dump_nonblack = split_dump_nonblack + 1;
+            split_dump_x = split_dump_x + 1;
+        end
+    end
+end
+
 initial require_verilator_screenshot = $test$plusargs("REQUIRE_VERILATOR_SCREENSHOT");
 initial begin
     native5_enabled = $test$plusargs("DUMP5") || $test$plusargs("NATIVE5ONLY") ||
