@@ -463,6 +463,10 @@ try {
     Run-HdlTest "t23_video_mode" "tb_video_mode" @(
         "rtl/video/s32_video.sv", "verif/common/tb_video_mode.sv"
     ) "VIDEO MODE LATCH PASS"
+    Run-HdlTest "t23_splitscreen_composer" "tb_splitscreen_composer" @(
+        "rtl/video/s32_video.sv", "rtl/video/s32_splitscreen_composer.sv",
+        "verif/common/tb_splitscreen_composer.sv"
+    ) "SPLITSCREEN COMPOSER OVERALL PASS"
 
     Write-Tier 23 "byte-wide true-dual-port BRAM and audio clock cadence"
     Run-HdlTest "t24_byte_dpram" "tb_byte_dpram" @("rtl/video/s32_big_dpram.sv", "verif/common/tb_byte_dpram.sv") "BYTE DPRAM PASS"

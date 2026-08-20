@@ -169,6 +169,7 @@ localparam CONF_STR = {
     "-;",
 `ifndef S32_SYSTEM32_ONLY
     "O[6],Screen (Multi32),A,B;",
+    "O[38],Splitscreen,Off,On;",
 `endif
     "O[7],Service Mode,Off,On;",
     // status[8], status[30:34], status[36:37] were the lightgun/GunCon SNAC
@@ -449,11 +450,11 @@ sdram sdram (
 
 ////////////////////////////   FRAMEBUFFER   //////////////////////////////////
 wire        fbw_start, fbw_valid, fbw_end, fbw_shadow, fbw_busy;
-wire        fbe_req, fbe_ack, fbr_req, fbr_ack;
-wire  [1:0] fbw_buf, fbe_buf, fbr_buf;
+wire        fbe_req, fbe_ack, fbr_req, fbr_ack, fbr2_req, fbr2_ack;
+wire  [1:0] fbw_buf, fbe_buf, fbr_buf, fbr2_buf;
 wire  [8:0] fbw_x, fbr_x;
-wire  [7:0] fbw_y, fbe_y, fbr_y;
-wire [15:0] fbw_pix, fbr_pix;
+wire  [7:0] fbw_y, fbe_y, fbr_y, fbr2_y;
+wire [15:0] fbw_pix, fbr_pix, fbr2_pix;
 s32_fb_if fb (
     .clk(clk_ram), .rst(reset),
     .DDRAM_BUSY(DDRAM_BUSY), .DDRAM_BURSTCNT(DDRAM_BURSTCNT),
@@ -465,7 +466,9 @@ s32_fb_if fb (
     .wr_shadow(fbw_shadow), .wr_busy(fbw_busy),
     .er_req(fbe_req), .er_buf(fbe_buf), .er_y(fbe_y), .er_ack(fbe_ack),
     .rd_req(fbr_req), .rd_buf(fbr_buf), .rd_y(fbr_y), .rd_ack(fbr_ack),
-    .rd_x(fbr_x), .rd_pix(fbr_pix)
+    .rd_x(fbr_x), .rd_pix(fbr_pix),
+    .rd2_req(fbr2_req), .rd2_buf(fbr2_buf), .rd2_y(fbr2_y),
+    .rd2_ack(fbr2_ack), .rd2_pix(fbr2_pix)
 );
 
 //////////////////////////////   INPUTS   /////////////////////////////////////
@@ -642,6 +645,7 @@ wire [7:0] core_ppi_pc = (brival_inputs || darkedge_inputs) ? 8'hff :
 //////////////////////////////   CORE   ///////////////////////////////////////
 wire [23:0] rgb_a, rgb_b;
 wire ce_pix_core, core_hb, core_vb;
+wire [8:0] core_hcnt;   // native raster X, for the splitscreen composer below
 wire signed [15:0] aud_l, aud_r;
 s32_core core (
     .clk_sys(clk_sys), .clk_ram(clk_ram),
@@ -682,6 +686,8 @@ s32_core core (
     .fb_rd_req(fbr_req), .fb_rd_buf(fbr_buf),
     .fb_rd_y(fbr_y), .fb_rd_ack(fbr_ack),
     .fb_rd_x(fbr_x), .fb_rd_pix(fbr_pix),
+    .fb_rd2_req(fbr2_req), .fb_rd2_buf(fbr2_buf),
+    .fb_rd2_y(fbr2_y), .fb_rd2_ack(fbr2_ack), .fb_rd2_pix(fbr2_pix),
     .v25_prg_wr(v25_wr), .v25_prg_waddr(v25_waddr), .v25_prg_wdata(v25_wdata),
     .eep_ld_wr(eep_wr), .eep_ld_addr(eep_waddr), .eep_ld_data(eep_wdata),
     .eep_rd_data(eep_rd_data), .eep_rd_addr(eep_rd_addr),
@@ -700,6 +706,7 @@ s32_core core (
     .rgb_a(rgb_a), .rgb_b(rgb_b),
     .ce_pix(ce_pix_core),
     .hs(core_hs), .vs(core_vs), .hb(core_hb), .vb(core_vb),
+    .hcnt_o(core_hcnt), .vcnt_o(),
     .mode_416_active(mode_416_active),
     .audio_l(aud_l), .audio_r(aud_r),
     .out_lamps()
@@ -711,9 +718,40 @@ assign AUDIO_R = aud_r;
 //////////////////////////////   VIDEO   //////////////////////////////////////
 `ifdef S32_SYSTEM32_ONLY
 wire [23:0] game_rgb = rgb_a;
+wire splitscreen_en = 1'b0;
 `else
 wire [23:0] game_rgb = status[6] ? rgb_b : rgb_a;
+wire splitscreen_en = status[38];
 `endif
+
+// Splitscreen composer: mix0/mix1 already render both screens every native
+// frame (see s32_core.sv fb_rd2_* comment) -- this places them side by side
+// on a doubled-width output raster instead of the single-screen A/B toggle
+// above. Bypassed entirely (comp_* unused) when splitscreen_en is low.
+wire [23:0] comp_rgb;
+wire        comp_ce_pix, comp_hs, comp_vs, comp_hb, comp_vb;
+s32_splitscreen_composer u_splitscreen (
+    .clk(clk_sys), .rst(video_reset), .mode_416_active(mode_416_active),
+    .rgb_a(rgb_a), .rgb_b(rgb_b),
+    .hcnt(core_hcnt),
+    .ce_pix_native(ce_pix_core),
+    .vblank_native(core_vb),
+    .vsync_native(core_vs),
+    .rgb_out(comp_rgb), .ce_pix_out(comp_ce_pix),
+    .hsync_out(comp_hs), .vsync_out(comp_vs),
+    .hblank_out(comp_hb), .vblank_out(comp_vb)
+);
+
+// disp_* is the signal set every downstream video stage should use: the
+// composed dual-screen raster when Splitscreen is on, native single-screen
+// timing otherwise.
+wire [23:0] disp_rgb    = splitscreen_en ? comp_rgb    : game_rgb;
+wire        disp_ce_pix = splitscreen_en ? comp_ce_pix : ce_pix_core;
+wire        disp_hs     = splitscreen_en ? comp_hs     : core_hs;
+wire        disp_vs     = splitscreen_en ? comp_vs     : core_vs;
+wire        disp_hb     = splitscreen_en ? comp_hb     : core_hb;
+wire        disp_vb     = splitscreen_en ? comp_vb     : core_vb;
+
 wire [2:0] scandoubler_fx = status[5:3];
 // Scandoubler Fx is a 3-bit field (None/CRT 25/50/75). VGA_SL takes the two
 // low bits directly so None=0 and CRT 25/50/75 map to 1/2/3.
@@ -725,8 +763,12 @@ assign VGA_SL = scanline_level[1:0];
 // Full Screen fills; [ARC1]/[ARC2] emit the framework custom-aspect encoding
 // (ARY=0, ARX = menu index) instead of acting as 16:9 (audit R20 PF-2).
 wire [1:0] aspect = status[2:1];
-wire [11:0] aspect_arx = (aspect == 0) ? 12'd4 : {10'd0, (aspect - 1'd1)};
-wire [11:0] aspect_ary = (aspect == 0) ? 12'd3 : 12'd0;
+// Two 4:3 screens side by side is ~8:3, wide of a single screen's 4:3/16:9
+// choices -- override the OSD aspect selector while Splitscreen is on.
+wire [11:0] aspect_arx = splitscreen_en ? 12'd8 :
+                          (aspect == 0) ? 12'd4 : {10'd0, (aspect - 1'd1)};
+wire [11:0] aspect_ary = splitscreen_en ? 12'd3 :
+                          (aspect == 0) ? 12'd3 : 12'd0;
 
 // Keep the framework's integer-scaling size calculation available through the
 // OSD while retaining the direct native RGB/sync/DE/CE path below.  SCALE=0 is
@@ -737,14 +779,14 @@ wire [2:0] scale_mode = (HDMI_WIDTH != 12'd0 && HDMI_HEIGHT != 12'd0)
 wire scale_de_unused;
 video_freak s32_video_freak (
     .CLK_VIDEO (clk_sys),
-    .CE_PIXEL  (ce_pix_core),
-    .VGA_VS    (core_vs),
+    .CE_PIXEL  (disp_ce_pix),
+    .VGA_VS    (disp_vs),
     .HDMI_WIDTH(HDMI_WIDTH),
     .HDMI_HEIGHT(HDMI_HEIGHT),
     .VGA_DE    (scale_de_unused),
     .VIDEO_ARX (VIDEO_ARX),
     .VIDEO_ARY (VIDEO_ARY),
-    .VGA_DE_IN(~(core_hb | core_vb)),
+    .VGA_DE_IN(~(disp_hb | disp_vb)),
     .ARX       (aspect_arx),
     .ARY       (aspect_ary),
     .CROP_SIZE (12'd0),
@@ -762,8 +804,11 @@ wire signed [4:0] crt_hsize  = $signed(status[14:10]);
 wire        [6:0] crt_hpos   = status[21:15];
 wire signed [5:0] crt_vshift = $signed(status[26:22]);
 wire hdmi_output_active = (HDMI_WIDTH != 12'd0) || (HDMI_HEIGHT != 12'd0);
+// crt_adjust's HTOTAL/VTOTAL are hard-wired to the native single-screen
+// raster (512x262); the composer's doubled-width raster is incompatible
+// with it, so force CRT Adjust off whenever Splitscreen is on.
 wire crt_adjust_active = crt_on && !hdmi_output_active
-                       && (scandoubler_fx == 3'd0);
+                       && (scandoubler_fx == 3'd0) && !splitscreen_en;
 
 // System 32's active window is line-anchored at x=0. HSync-shift mode avoids
 // moving the content out of the line buffer at the extreme H-Position values.
@@ -878,14 +923,14 @@ end
 // No lightgun overlay: OutRunners has no positional gun input, so the
 // crosshair/border decoration stage (s32_lightgun_overlay) is removed and
 // game_rgb (or the CRT Adjust path) drives VGA directly.
-wire [23:0] video_rgb_pre = crt_adjust_active ? {crt_r, crt_g, crt_b} : game_rgb;
+wire [23:0] video_rgb_pre = crt_adjust_active ? {crt_r, crt_g, crt_b} : disp_rgb;
 
-assign CE_PIXEL = crt_adjust_active ? crt_rd_ce : ce_pix_core;
+assign CE_PIXEL = crt_adjust_active ? crt_rd_ce : disp_ce_pix;
 assign VGA_R  = video_rgb_pre[23:16];
 assign VGA_G  = video_rgb_pre[15:8];
 assign VGA_B  = video_rgb_pre[7:0];
-assign VGA_HS = crt_adjust_active ? crt_hs : core_hs;
-assign VGA_VS = crt_adjust_active ? crt_vs : core_vs;
-assign VGA_DE = crt_adjust_active ? crt_de_osd : ~(core_hb | core_vb);
+assign VGA_HS = crt_adjust_active ? crt_hs : disp_hs;
+assign VGA_VS = crt_adjust_active ? crt_vs : disp_vs;
+assign VGA_DE = crt_adjust_active ? crt_de_osd : ~(disp_hb | disp_vb);
 
 endmodule

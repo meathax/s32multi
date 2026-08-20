@@ -35,6 +35,13 @@ module s32_fb_ddr_model #(
     input       [8:0] rd_x,
     output     [15:0] rd_pix,
 
+    // second (Multi32 screen-B) read lane, pass straight through to the DUT
+    input             rd2_req,
+    input       [1:0] rd2_buf,
+    input       [7:0] rd2_y,
+    output            rd2_ack,
+    output     [15:0] rd2_pix,
+
     output reg [31:0] write_accepts,
     output reg [31:0] read_accepts,
     output reg [31:0] line_acks,
@@ -64,7 +71,9 @@ s32_fb_if #(.FB_BASE(32'h0000_0000)) dut (
     .wr_shadow(wr_shadow), .wr_busy(wr_busy),
     .er_req(er_req), .er_buf(er_buf), .er_y(er_y), .er_ack(er_ack),
     .rd_req(rd_req), .rd_buf(rd_buf), .rd_y(rd_y), .rd_ack(rd_ack),
-    .rd_x(rd_x), .rd_pix(rd_pix)
+    .rd_x(rd_x), .rd_pix(rd_pix),
+    .rd2_req(rd2_req), .rd2_buf(rd2_buf), .rd2_y(rd2_y), .rd2_ack(rd2_ack),
+    .rd2_pix(rd2_pix)
 );
 
 // Four buffers x 256 lines x 128 64-bit words.  Transparent initialization

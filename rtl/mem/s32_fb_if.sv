@@ -50,13 +50,22 @@ module s32_fb_if #(
     input       [7:0] er_y,
     output reg        er_ack,
 
-    // line read port -> mixer
+    // line read port -> mixer A
     input             rd_req,
     input       [1:0] rd_buf,
     input       [7:0] rd_y,
     output reg        rd_ack,          // line available in buffer
     input       [8:0] rd_x,            // synchronous read of fetched line
-    output     [15:0] rd_pix
+    output     [15:0] rd_pix,
+
+    // line read port -> mixer B (Multi32 second monitor, simultaneous scanout).
+    // Both monitors share hcnt/vcnt in lockstep (s32_video.sv single timing
+    // generator), so lane B is addressed by the same rd_x as lane A.
+    input             rd2_req,
+    input       [1:0] rd2_buf,
+    input       [7:0] rd2_y,
+    output reg        rd2_ack,
+    output     [15:0] rd2_pix
 );
 
 // line assembly buffer for writes: pixels land at their absolute x, a mask
@@ -77,12 +86,19 @@ reg         run_any;               // at least one pixel written
 // Two fetched lines keep producer and consumer ownership separate. DDR fills
 // one bank while scanout reads the other; a completed line is published only
 // at x=0, so a late or early next-line fetch cannot tear the displayed raster.
+// Lane B (second Multi32 monitor) gets its own independent bank pair so both
+// screens can be resident and addressed every pixel at once; it shares the
+// DDR engine (dispatched right after lane A, one line's worth of bandwidth is
+// microseconds against a ~63us line period) but not the line storage.
 reg  [1:0] rd_lane;
-reg        display_bank;
-reg        fill_bank;
-reg        line_ready;
-wire       rd_line_publish = (rd_x == 9'd0) && line_ready;
-wire       scan_bank = rd_line_publish ? fill_bank : display_bank;
+reg        display_bank,  fill_bank,  line_ready;
+reg        display_bank2, fill_bank2, line_ready2;
+wire       rd_line_publish  = (rd_x == 9'd0) && line_ready;
+wire       rd_line_publish2 = (rd_x == 9'd0) && line_ready2;
+wire       scan_bank  = rd_line_publish  ? fill_bank  : display_bank;
+wire       scan_bank2 = rd_line_publish2 ? fill_bank2 : display_bank2;
+// Which lane the in-flight D_RD/D_RD_W fetch belongs to (latched at dispatch).
+reg        rd_active2;
 
 // DDR engine
 typedef enum logic [3:0] { D_IDLE, D_WR_PF, D_WR, D_ER, D_RD, D_RD_W,
@@ -101,13 +117,16 @@ reg [6:0]  rbeat;
 // flush boundary keeps the active byte-enable path independent of run_x0 and
 // the beat counter's add chain.
 reg [6:0]  run_word_q;
-wire        line_we = (dst == D_RD_W) && DDRAM_DOUT_READY;
+wire        line_we  = (dst == D_RD_W) && DDRAM_DOUT_READY && !rd_active2;
+wire        line_we_b= (dst == D_RD_W) && DDRAM_DOUT_READY &&  rd_active2;
 wire [6:0]  line_waddr = rbeat;
 wire [63:0] line_wdata = DDRAM_DOUT;
 wire        line_we0 = line_we && !fill_bank;
 wire        line_we1 = line_we &&  fill_bank;
+wire        line_we2 = line_we_b && !fill_bank2;
+wire        line_we3 = line_we_b &&  fill_bank2;
 
-wire [63:0] line_q0, line_q1;
+wire [63:0] line_q0, line_q1, line_q2, line_q3;
 s32_fb_line_ram line_ram0 (
     .clk(clk), .wr_en(line_we0), .wr_addr(line_waddr),
     .wr_data(line_wdata), .rd_addr(rd_x[8:2]), .rd_q(line_q0)
@@ -116,6 +135,14 @@ s32_fb_line_ram line_ram1 (
     .clk(clk), .wr_en(line_we1), .wr_addr(line_waddr),
     .wr_data(line_wdata), .rd_addr(rd_x[8:2]), .rd_q(line_q1)
 );
+s32_fb_line_ram line_ram2 (
+    .clk(clk), .wr_en(line_we2), .wr_addr(line_waddr),
+    .wr_data(line_wdata), .rd_addr(rd_x[8:2]), .rd_q(line_q2)
+);
+s32_fb_line_ram line_ram3 (
+    .clk(clk), .wr_en(line_we3), .wr_addr(line_waddr),
+    .wr_data(line_wdata), .rd_addr(rd_x[8:2]), .rd_q(line_q3)
+);
 
 `ifdef SIMULATION
 always @(posedge clk) begin
@@ -123,13 +150,21 @@ always @(posedge clk) begin
         $fatal(1, "sprite line fill attempted to overwrite display bank");
     if (!rst && line_ready && line_we)
         $fatal(1, "sprite line fill continued after completion");
+    if (!rst && line_we_b && (fill_bank2 == display_bank2))
+        $fatal(1, "sprite line fill (B) attempted to overwrite display bank");
+    if (!rst && line_ready2 && line_we_b)
+        $fatal(1, "sprite line fill (B) continued after completion");
 end
 `endif
 
-wire [63:0] rd_word = scan_bank ? line_q1 : line_q0;
-assign rd_pix = (rd_lane == 2'd0) ? rd_word[15:0]  :
-                (rd_lane == 2'd1) ? rd_word[31:16] :
-                (rd_lane == 2'd2) ? rd_word[47:32] : rd_word[63:48];
+wire [63:0] rd_word  = scan_bank  ? line_q1 : line_q0;
+wire [63:0] rd_word2 = scan_bank2 ? line_q3 : line_q2;
+assign rd_pix  = (rd_lane == 2'd0) ? rd_word[15:0]   :
+                 (rd_lane == 2'd1) ? rd_word[31:16]  :
+                 (rd_lane == 2'd2) ? rd_word[47:32]  : rd_word[63:48];
+assign rd2_pix = (rd_lane == 2'd0) ? rd_word2[15:0]  :
+                 (rd_lane == 2'd1) ? rd_word2[31:16] :
+                 (rd_lane == 2'd2) ? rd_word2[47:32] : rd_word2[63:48];
 
 always @(posedge clk) begin
     rd_lane <= rd_x[1:0];
@@ -200,9 +235,10 @@ reg flush_req;
 // deferring the flush cannot discard it.
 wire erase_pending = er_req && !er_ack;
 // Do not reuse a completed fill bank until the raster boundary publishes it.
-wire read_pending  = rd_req && !rd_ack && !line_ready;
+wire read_pending  = rd_req  && !rd_ack  && !line_ready;
+wire read_pending2 = rd2_req && !rd2_ack && !line_ready2;
 wire flush_accept  = (dst == D_IDLE) && !erase_pending &&
-                     !read_pending && flush_req;
+                     !read_pending && !read_pending2 && flush_req;
 
 // capture pixel runs (indexed by the pixel's own x)
 always @(posedge clk) begin
@@ -243,15 +279,23 @@ assign wr_busy = wr_end | flush_req |
 always @(posedge clk) begin
     if (rst) begin
         dst <= D_IDLE; dwe <= 0; drd <= 0; er_ack <= 0; rd_ack <= 0;
+        rd2_ack <= 0; rd_active2 <= 1'b0;
         run_word_q <= 7'd0;
         display_bank <= 1'b0;
         fill_bank <= 1'b1;
         line_ready <= 1'b0;
+        display_bank2 <= 1'b0;
+        fill_bank2 <= 1'b1;
+        line_ready2 <= 1'b0;
     end
     else begin
         if (rd_line_publish) begin
             display_bank <= fill_bank;
             line_ready <= 1'b0;
+        end
+        if (rd_line_publish2) begin
+            display_bank2 <= fill_bank2;
+            line_ready2 <= 1'b0;
         end
         case (dst)
         D_IDLE: begin
@@ -272,6 +316,17 @@ always @(posedge clk) begin
                 dburst <= 8'd128;
                 rbeat  <= 0;
                 fill_bank <= ~display_bank;
+                rd_active2 <= 1'b0;
+                drd    <= 1'b1;
+                dbe    <= 8'hFF;  // audit R20 PF-4: reads drive all byte lanes
+                dst    <= D_RD;
+            end
+            else if (read_pending2) begin
+                daddr  <= pix_addr(rd2_buf, rd2_y, 7'd0);
+                dburst <= 8'd128;
+                rbeat  <= 0;
+                fill_bank2 <= ~display_bank2;
+                rd_active2 <= 1'b1;
                 drd    <= 1'b1;
                 dbe    <= 8'hFF;  // audit R20 PF-4: reads drive all byte lanes
                 dst    <= D_RD;
@@ -424,8 +479,14 @@ always @(posedge clk) begin
             if (DDRAM_DOUT_READY) begin
                 rbeat <= rbeat + 1'd1;
                 if (rbeat == 7'd127) begin
-                    line_ready <= 1'b1;
-                    rd_ack <= 1'b1;
+                    if (rd_active2) begin
+                        line_ready2 <= 1'b1;
+                        rd2_ack <= 1'b1;
+                    end
+                    else begin
+                        line_ready <= 1'b1;
+                        rd_ack <= 1'b1;
+                    end
                     dst <= D_IDLE;
                 end
             end
@@ -434,7 +495,8 @@ always @(posedge clk) begin
         endcase
         // Four-phase request/acknowledge: a held request is accepted once,
         // and the acknowledge drops as soon as its producer drops request.
-        if (!rd_req) rd_ack <= 1'b0;
+        if (!rd_req)  rd_ack  <= 1'b0;
+        if (!rd2_req) rd2_ack <= 1'b0;
         if (!er_req) er_ack <= 1'b0;
     end
 end

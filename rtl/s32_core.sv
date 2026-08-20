@@ -137,6 +137,12 @@ module s32_core #(
     input             fb_rd_ack,
     output      [8:0] fb_rd_x,
     input      [15:0] fb_rd_pix,
+    // Screen B independent scanout lane (Multi32 simultaneous split display).
+    output            fb_rd2_req,
+    output      [1:0] fb_rd2_buf,
+    output      [7:0] fb_rd2_y,
+    input             fb_rd2_ack,
+    input      [15:0] fb_rd2_pix,
 
     // V25 program load
     input             v25_prg_wr,
@@ -164,6 +170,8 @@ module s32_core #(
     output     [23:0] rgb_b,
     output            ce_pix,
     output            hs, vs, hb, vb,
+    output      [8:0] hcnt_o, vcnt_o,   // native raster position, for the
+                                         // top-level splitscreen composer
     output            mode_416_active,
 
     output signed [15:0] audio_l,
@@ -443,6 +451,8 @@ s32_video crt (
     .hblank(hb), .vblank(vb), .hsync(hs), .vsync(vs),
     .vblank_start(vbl_start), .vblank_end(vbl_end)
 );
+assign hcnt_o = hcnt;
+assign vcnt_o = vcnt;
 
 // tilemap engine (clk_ram domain; registers quasi-static)
 wire        tm_lb_we;
@@ -683,6 +693,9 @@ assign mode_416 = r1ff00[15];
 reg       fb_rd_req_r;
 reg [1:0] fb_rd_buf_r;
 reg [7:0] fb_rd_y_r;
+reg       fb_rd2_req_r;
+reg [1:0] fb_rd2_buf_r;
+reg [7:0] fb_rd2_y_r;
 // Prefetch only lines that will actually display: kicks during vcnt 0-222
 // fetch lines 1-223 and vcnt 261 fetches next frame's line 0.  The former
 // ungated kick also ran through the 37 vblank lines, fetching nonexistent
@@ -707,16 +720,16 @@ always @(posedge clk_ram) begin
             fb_rd_req_r <= 1'b1;
             // Ordinary System 32 A/B scanout. Physical selectors change only
             // when a complete field is published, so the fetch cannot observe
-            // an in-flight render.
-            fb_rd_buf_r <= spr_scan_buf;
+            // an in-flight render. Lane A is fixed to monitor 0 (spr_scan_buf_a
+            // below), independent of status[6]/screen_sel, so both scanout
+            // lanes stay correct simultaneously for splitscreen -- screen_sel
+            // now only selects the final display mux, not which sprite data
+            // is fetched.
+            fb_rd_buf_r <= spr_scan_buf_a;
             // CRT lines are 0..261. Truncating line 261 before adding produced
-            // line 6 instead of the next frame's line 0.
-            if (vcnt == 9'd261)
-                fb_rd_y_r <= cfg_flip_y ? 8'd223 : 8'd0;
-            else if (cfg_flip_y && vcnt < 9'd223)
-                fb_rd_y_r <= 8'd222 - vcnt[7:0];
-            else
-                fb_rd_y_r <= vcnt[7:0] + 8'd1;
+            // line 6 instead of the next frame's line 0. Shared with lane B's
+            // identical mux below via fb_next_y.
+            fb_rd_y_r <= fb_next_y;
         end
     end
 end
@@ -725,15 +738,40 @@ assign fb_rd_buf = fb_rd_buf_r;
 assign fb_rd_y   = fb_rd_y_r;
 assign fb_rd_x   = hcnt;
 
+// Both scanout lanes are fixed to their own monitor's physical buffer, per
+// s32_sprite.sv's fb_wr_buf <= {d_mon, ~disp_buf[0]} write-side mapping
+// (bit1 = monitor 0/1, bit0 = the shared double-buffer flip -- one SWAP
+// command flips both monitors together). status[6]/screen_sel no longer
+// steers which sprite data is fetched, only which screen is displayed.
+wire [1:0] spr_scan_buf_a = {1'b0, ~disp_buf[0]};
+wire [1:0] spr_scan_buf_b = {1'b1, ~disp_buf[0]};
+always @(posedge clk_ram) begin
+    if (rst) begin
+        fb_rd2_req_r <= 1'b0;
+        fb_rd2_buf_r <= 2'd0;
+        fb_rd2_y_r   <= 8'd0;
+    end
+    else begin
+        if (fb_rd2_req_r) begin
+            if (fb_rd2_ack) fb_rd2_req_r <= 1'b0;
+        end
+        else if (!fb_rd2_ack && fb_rd_kick) begin
+            fb_rd2_req_r <= 1'b1;
+            fb_rd2_buf_r <= spr_scan_buf_b;
+            fb_rd2_y_r <= fb_next_y;
+        end
+    end
+end
+assign fb_rd2_req = fb_rd2_req_r;
+assign fb_rd2_buf = fb_rd2_buf_r;
+assign fb_rd2_y   = fb_rd2_y_r;
+
 // mixers + palettes
-// Both mixers read the same fetched sprite line. That is correct, not a
-// shortcut: MiSTer shows one Multi 32 screen at a time (status[6],
-// screen_sel), and the sprite engine's scan_buf now selects that screen's
-// DDR3 buffer half (s32_sprite.sv screen_sel), so fb_rd_pix already holds
-// the displayed screen's line. The hidden screen's mixer runs on the same
-// data and is simply never looked at -- rgb_a/rgb_b are muxed by status[6]
-// in Arcade-SegaSystem32.sv.
-wire [15:0] fb_rd_pix_b = fb_rd_pix;
+// mix0 (screen A) reads lane A's fetched line; mix1 (screen B) reads its own
+// independent lane B fetch (fb_rd2_*, above). Both lanes fetch every frame
+// regardless of which screen is currently displayed -- required so the
+// side-by-side splitscreen composer can show both simultaneously.
+wire [15:0] fb_rd_pix_b = fb_rd2_pix;
 `ifdef S32_UNIVERSAL_DISABLED
 `define S32_MIX_PIX_PIPE
 `elsif S32_GAME_ONLY_STD
