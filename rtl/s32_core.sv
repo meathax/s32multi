@@ -708,13 +708,29 @@ wire fb_rd_kick = ce_pix && hcnt == 9'd16 &&
 wire [7:0] fb_next_y = (vcnt == 9'd261) ? (cfg_flip_y ? 8'd223 : 8'd0) :
                            (cfg_flip_y ? (8'd222 - vcnt[7:0])
                                        : (vcnt[7:0] + 8'd1));
-// Both scanout lanes are fixed to their own monitor's physical buffer, per
-// s32_sprite.sv's fb_wr_buf <= {d_mon, ~disp_buf[0]} write-side mapping
+// Both scanout lanes are fixed to their own monitor's physical buffer
 // (bit1 = monitor 0/1, bit0 = the shared double-buffer flip -- one SWAP
 // command flips both monitors together). Declared before first use: ModelSim
 // vlog rejects a forward reference to a net inside a procedural block.
-wire [1:0] spr_scan_buf_a = {1'b0, ~disp_buf[0]};
-wire [1:0] spr_scan_buf_b = {1'b1, ~disp_buf[0]};
+//
+// The flip bit must be the COMPLETED buffer, never the render target.
+// s32_sprite.sv renders into fb_wr_buf = {d_mon, ~disp_buf[0]} (live value
+// after R_SWAP toggles disp_buf ~50us into the field), so reading
+// ~disp_buf[0] here tracked the in-flight erase+render pass: the beam chased
+// the top-down eraser down the displayed buffer every field, leaving a
+// horizontal band of missing sprites between the eraser and the serialized
+// renderer (title-logo/billboard tops cut, band across gameplay).
+// Instead sample disp_buf[0] once per field at vblank start: at that instant
+// it names the buffer whose pass last completed (R_SWAP only executes after
+// the previous pass reached R_DONE, so a mid-render overrun simply holds the
+// same completed frame for another field). disp_buf is written on clk_sys at
+// R_SWAP, mid-field; vbl_start (line 224) is millisecons away from that
+// write, so this single-bit clk_ram sample is race-free by timing.
+reg spr_scan_front_q;
+initial spr_scan_front_q = 1'b0;
+always @(posedge clk_ram) if (vbl_start) spr_scan_front_q <= disp_buf[0];
+wire [1:0] spr_scan_buf_a = {1'b0, spr_scan_front_q};
+wire [1:0] spr_scan_buf_b = {1'b1, spr_scan_front_q};
 always @(posedge clk_ram) begin
     if (rst) begin
         fb_rd_req_r <= 1'b0;

@@ -83,7 +83,25 @@ set_global_assignment -name ADV_NETLIST_OPT_SYNTH_WYSIWYG_REMAP ON
 set_global_assignment -name SYNTH_GATED_CLOCK_CONVERSION ON
 set_global_assignment -name PRE_MAPPING_RESYNTHESIS ON
 set_global_assignment -name ROUTER_CLOCKING_TOPOLOGY_ANALYSIS ON
-set_global_assignment -name ROUTER_TIMING_OPTIMIZATION_LEVEL NORMAL
+# 2026-08-21: raised NORMAL -> MAXIMUM. The seed-2 residual miss is the ascal
+# poly_final family (o_h_poly_t.r* -> o_h_poly_pix.r*, a 19-bit add + saturate
+# registered in one cycle), worst -0.026 ns Slow -40C at 1 logic level -- i.e.
+# almost entirely interconnect delay, not logic depth, at 98% ALM / 100% M10K
+# congestion. MAXIMUM directs the router to spend extra effort on timing-
+# critical nets, which is the matched lever for a routing-limited path. Pure
+# router directive: no RTL, no behaviour, no clock and no timing exception.
+# RESULT: CLOSES all 4 corners. Router spent 7:05 vs 3:24 at NORMAL (fit 40:10
+# total). STA: 0 errors, 0 warnings, Critical Warning 332148 gone, TNS 0.000 on
+# every corner. Worst setup Slow 100C +0.182 / Slow -40C +0.000; worst hold
+# +0.113; recovery +3.299; removal +0.618; MPW +0.398. ALM unchanged at 98%
+# (40,926/41,910), M10K 553/553, DSP 58/112.
+# CAVEAT: the ascal pll_hdmi poly_final path lands at exactly +0.000 ns on the
+# Slow -40C corner -- met with TNS 0.000, but zero margin. The underlying
+# fragility is device fullness (98% ALM / 100% M10K), which is what makes every
+# netlist change re-roll this lottery. Freeing block RAM / ALMs is still the
+# durable fix; this router setting is the correct closure for the current
+# netlist, not a substitute for that.
+set_global_assignment -name ROUTER_TIMING_OPTIMIZATION_LEVEL MAXIMUM
 set_global_assignment -name ECO_OPTIMIZE_TIMING ON
 # 2026-08-20: diagnosed via one-off quartus_sta -t get_timing_paths report
 # (user-approved) that the persistent hold failures across all seeds (6, 1,
@@ -212,7 +230,33 @@ set_global_assignment -name ALM_REGISTER_PACKING_EFFORT MEDIUM
 # Reproduced twice; seed 1 regressed hold and was reverted. User accepted
 # the ascal setup miss as a reviewed exception 2026-08-20 -- see final build
 # report. Final release seed.
-set_global_assignment -name SEED 6
+# 2026-08-21 sprite-renderer field-budget fix (FAST_1X xstep<=1.0): netlist
+# changed again. Seed 6 clean-compile now misses pll_hdmi divclk Slow 100C
+# setup at -0.100 ns (TNS -0.116, single small family) -- not present in the
+# 2026-08-21 06:57 baseline build. Re-running seed exploration (max 3) on
+# this netlist before treating it as a structural fix.
+# Seed 1: WORSE -- regresses to emu|pll clk_sys divclk setup fail on 2 corners
+# (Slow 100C -0.050, Slow -40C -0.198 ns), deeper than seed 6's single
+# pll_hdmi-only miss. Trying seed 2.
+# Seed 2: pll_hdmi divclk misses Slow -40C setup only, -0.026 ns (smaller than
+# seed 6's -0.100 ns Slow 100C miss, but still violated). Trying seed 3, the
+# last allowed additional seed on this netlist.
+# Seed 3: WORSE -- 3 corners fail, pll_hdmi divclk -0.510/-0.277 ns and
+# emu|pll clk_sys divclk -0.386 ns. All 3 allowed additional seeds tried
+# (1, 2, 3); none close every corner. Reverting to seed 2, the smallest
+# violation found: single pll_hdmi divclk miss, Slow -40C setup only,
+# -0.026 ns. Named-path diagnostic next to classify before accepting as a
+# reviewed exception.
+# Named the seed-2 Slow -40C miss with a one-off quartus_sta -t collection-API
+# diagnostic (get_timing_paths -setup -npaths 10) against the seed-2 fit
+# database: all 10 worst paths are ascal:ascal|o_h_poly_t.* -> o_h_poly_pix.*
+# (video scaler polyphase filter tap register-to-register copy, 1-2 logic
+# levels, same clk_sys/pll_hdmi-derived video clock domain the STA summary
+# names). Same vendored-ascal signature as the 2026-08-20 accepted exception
+# (-0.264 ns then), 10x smaller here (-0.026 ns worst), not core RTL, not
+# touched by the sprite-renderer fix. Hold/recovery/removal/MPW all clean at
+# every corner. Candidate reviewed exception pending user confirmation.
+set_global_assignment -name SEED 2
 # 2026-08-13: dropped from 8 to 2.  At 8, quartus_map and quartus_fit both died
 # with `*** Fatal Error: Access Violation` on this host; the fitter's stack
 # trace named deeply recursive TIS_ADVANCED_SPICE_RC_BODY::annotate_delay_tree
