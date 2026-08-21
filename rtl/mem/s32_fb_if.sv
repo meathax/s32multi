@@ -42,7 +42,8 @@ module s32_fb_if #(
     input      [15:0] wr_pix,
     input             wr_end,
     input             wr_shadow,       // run is a shadow RMW (dest &= 0x7fff)
-    output            wr_busy,         // previous run still flushing
+    output            wr_busy,         // any run still capturing/queued/flushing
+    output            wr_can_start,    // a free capture context is available
 
     // erase port
     input             er_req,
@@ -75,13 +76,23 @@ module s32_fb_if #(
 // RAM below has a 16-bit-lane write port for arbitrary-order sprite pixels and
 // a synchronous 64-bit flush read port.  Keeping this out of flops removes the
 // 8,192-register run buffer and its large read mux from the integrated map.
-reg [511:0] run_msk;               // which pixels this run actually wrote
-reg [8:0]   run_x0, run_xe;        // min / max written x
-reg [7:0]   run_y;
-reg [1:0]   run_bufsel;
-reg         run_active;
-reg         run_shadow;
-reg         run_any;               // at least one pixel written
+//
+// Two capture contexts ping-pong so the renderer can assemble the next row
+// while the previous row's flush drains to DDR (wr_can_start).  Flushes are
+// consumed strictly in enqueue order (flush_sel alternates like cap_sel), so
+// overwrite and shadow-RMW ordering between consecutive runs is preserved.
+reg [511:0] cap_msk    [0:1];      // which pixels each queued run wrote
+reg [8:0]   cap_x0     [0:1];      // min written x per context
+reg [8:0]   cap_xe     [0:1];      // max written x per context
+reg [7:0]   cap_y      [0:1];
+reg [1:0]   cap_bufsel [0:1];
+reg         cap_shadow [0:1];
+reg         cap_any    [0:1];      // at least one pixel written
+reg         cap_sel;               // context being captured next/now
+reg         flush_sel;             // oldest queued context (FIFO order)
+reg [1:0]   pending;               // context queued or flushing
+reg         run_active;            // capture in progress on cap_sel
+reg [511:0] flush_msk;             // mask copy latched at flush accept
 
 // Two fetched lines keep producer and consumer ownership separate. DDR fills
 // one bank while scanout reads the other; a completed line is published only
@@ -146,6 +157,11 @@ s32_fb_line_ram line_ram3 (
 
 `ifdef SIMULATION
 always @(posedge clk) begin
+    // The renderer drains all queued runs (wr_busy) before any erase pass, so
+    // an erase must never jump ahead of a queued sprite flush — that would
+    // wipe pixels the late flush then re-deposits onto the wrong frame.
+    if (!rst && er_req && !er_ack && (pending != 2'b00))
+        $fatal(1, "erase requested while sprite run flush still queued");
     if (!rst && line_we && (fill_bank == display_bank))
         $fatal(1, "sprite line fill attempted to overwrite display bank");
     if (!rst && line_ready && line_we)
@@ -187,7 +203,7 @@ endfunction
 wire [6:0] run_word_base = run_word_q;
 wire [6:0] run_cur_word  = run_word_q;
 wire [6:0] run_next_word = run_word_q + 7'd1;
-wire [6:0] run_ram_raddr = (dst == D_IDLE)       ? run_x0[8:2] :
+wire [6:0] run_ram_raddr = (dst == D_IDLE)       ? cap_x0[flush_sel][8:2] :
                             (dst == D_WR_PF)      ? run_next_word :
                             (dst == D_WR_SKIP)    ? run_cur_word :
                             (dst == D_WR_SKIP_PF) ? run_next_word :
@@ -195,9 +211,9 @@ wire [6:0] run_ram_raddr = (dst == D_IDLE)       ? run_x0[8:2] :
                                                      + (DDRAM_BUSY ? 7'd1 : 7'd2) :
                                                     run_cur_word;
 
-wire [3:0] run_base_mask = run_msk[{run_word_base, 2'b00} +: 4];
-wire [3:0] run_cur_mask  = run_msk[{run_cur_word,  2'b00} +: 4];
-wire [3:0] run_next_mask = run_msk[{run_next_word, 2'b00} +: 4];
+wire [3:0] run_base_mask = flush_msk[{run_word_base, 2'b00} +: 4];
+wire [3:0] run_cur_mask  = flush_msk[{run_cur_word,  2'b00} +: 4];
+wire [3:0] run_next_mask = flush_msk[{run_next_word, 2'b00} +: 4];
 wire [7:0] run_base_be = {{2{run_base_mask[3]}}, {2{run_base_mask[2]}},
                            {2{run_base_mask[1]}}, {2{run_base_mask[0]}}};
 wire [7:0] run_cur_be = {{2{run_cur_mask[3]}}, {2{run_cur_mask[2]}},
@@ -214,10 +230,10 @@ wire [63:0] run_ram_q;
 s32_fb_run_ram run_ram (
     .clk(clk),
     .wr_en(wr_valid && run_active),
-    .wr_addr(wr_x[8:2]),
+    .wr_addr({cap_sel, wr_x[8:2]}),
     .wr_lane(wr_x[1:0]),
     .wr_data(wr_pix),
-    .rd_addr(run_ram_raddr),
+    .rd_addr({flush_sel, run_ram_raddr}),
     .rd_q(run_ram_q)
 );
 
@@ -228,7 +244,9 @@ assign DDRAM_RD       = drd;
 assign DDRAM_DIN      = ddin;
 assign DDRAM_BE       = dbe;
 
-reg flush_req;
+// Drain indicator (kept under its historical name: white-box benches wait on
+// it): any run is queued or flushing.
+wire flush_req = pending[0] | pending[1];
 
 // Scanout has a fixed deadline; a completed sprite run may remain queued until
 // a pending display-line fetch has been launched.  Keep acceptance explicit so
@@ -238,49 +256,60 @@ wire erase_pending = er_req && !er_ack;
 wire read_pending  = rd_req  && !rd_ack  && !line_ready;
 wire read_pending2 = rd2_req && !rd2_ack && !line_ready2;
 wire flush_accept  = (dst == D_IDLE) && !erase_pending &&
-                     !read_pending && !read_pending2 && flush_req;
+                     !read_pending && !read_pending2 && pending[flush_sel];
 
-// capture pixel runs (indexed by the pixel's own x)
+// capture pixel runs (indexed by the pixel's own x).  wr_end enqueues the
+// context and flips cap_sel; the engine below clears pending at flush
+// completion.  cap_sel and flush_sel both strictly alternate, so the queue is
+// FIFO by construction and the set/clear indices can never collide (a context
+// is only recaptured after wr_can_start showed its pending bit clear).
 always @(posedge clk) begin
     if (wr_start) begin
-        run_x0     <= 9'd511;
-        run_xe     <= 9'd0;
-        run_y      <= wr_y;
-        run_bufsel <= wr_buf;
-        run_shadow <= wr_shadow;
-        run_active <= 1'b1;
-        run_any    <= 1'b0;
-        run_msk    <= 512'b0;
+        cap_x0[cap_sel]     <= 9'd511;
+        cap_xe[cap_sel]     <= 9'd0;
+        cap_y[cap_sel]      <= wr_y;
+        cap_bufsel[cap_sel] <= wr_buf;
+        cap_shadow[cap_sel] <= wr_shadow;
+        run_active          <= 1'b1;
+        cap_any[cap_sel]    <= 1'b0;
+        cap_msk[cap_sel]    <= 512'b0;
     end
     if (wr_valid && run_active) begin
-        run_msk[wr_x] <= 1'b1;
-        run_any <= 1'b1;
-        if (wr_x < run_x0) run_x0 <= wr_x;
-        if (wr_x > run_xe) run_xe <= wr_x;
+        cap_msk[cap_sel][wr_x] <= 1'b1;
+        cap_any[cap_sel] <= 1'b1;
+        if (wr_x < cap_x0[cap_sel]) cap_x0[cap_sel] <= wr_x;
+        if (wr_x > cap_xe[cap_sel]) cap_xe[cap_sel] <= wr_x;
     end
-    if (flush_accept) run_active <= 1'b0;
-    if (rst) run_active <= 1'b0;
+    if (wr_end && run_active) begin
+        run_active <= 1'b0;
+        cap_sel    <= ~cap_sel;
+    end
+    if (rst) begin
+        run_active <= 1'b0;
+        cap_sel    <= 1'b0;
+    end
 end
 
-always @(posedge clk) begin
-    if (rst) flush_req <= 0;
-    else if (wr_end && run_active) flush_req <= 1'b1;
-    else if (flush_accept) flush_req <= 1'b0;
-end
-
-// hold the renderer off from wr_end (combinational — closes the one-cycle
-// window before flush_req registers) until the flush completes
+// Full-drain indicator: R_DONE / buffer publication wait on this, and it keeps
+// the original interface semantics (asserted from wr_end until every queued
+// run has committed to DDR).
 assign wr_busy = wr_end | flush_req |
                  (dst == D_WR_PF) | (dst == D_WR) |
                  (dst == D_WR_SKIP) | (dst == D_WR_SKIP_PF) |
                  (dst == D_SH_R) | (dst == D_SH_RW) | (dst == D_SH_W) |
                  (dst == D_SH_SKIP);
 
+// A new run may begin as soon as the other context is free — this is what
+// lets row N+1 render while row N flushes.
+assign wr_can_start = !wr_end && !run_active && !pending[cap_sel];
+
 always @(posedge clk) begin
     if (rst) begin
         dst <= D_IDLE; dwe <= 0; drd <= 0; er_ack <= 0; rd_ack <= 0;
         rd2_ack <= 0; rd_active2 <= 1'b0;
         run_word_q <= 7'd0;
+        pending <= 2'b00;
+        flush_sel <= 1'b0;
         display_bank <= 1'b0;
         fill_bank <= 1'b1;
         line_ready <= 1'b0;
@@ -289,6 +318,9 @@ always @(posedge clk) begin
         line_ready2 <= 1'b0;
     end
     else begin
+        // Enqueue a completed capture (reads cap_sel before its same-cycle
+        // toggle in the capture block above).
+        if (wr_end && run_active) pending[cap_sel] <= 1'b1;
         if (rd_line_publish) begin
             display_bank <= fill_bank;
             line_ready <= 1'b0;
@@ -331,15 +363,19 @@ always @(posedge clk) begin
                 dbe    <= 8'hFF;  // audit R20 PF-4: reads drive all byte lanes
                 dst    <= D_RD;
             end
-            else if (flush_req) begin
+            else if (pending[flush_sel]) begin
                 beat  <= 0;
-                beats <= (run_xe[8:2] - run_x0[8:2]);
-                run_word_q <= run_x0[8:2];
-                daddr <= pix_addr(run_bufsel, run_y, run_x0[8:2]);
-                if (!run_any) begin
+                beats <= (cap_xe[flush_sel][8:2] - cap_x0[flush_sel][8:2]);
+                run_word_q <= cap_x0[flush_sel][8:2];
+                daddr <= pix_addr(cap_bufsel[flush_sel], cap_y[flush_sel],
+                                  cap_x0[flush_sel][8:2]);
+                flush_msk <= cap_msk[flush_sel];
+                if (!cap_any[flush_sel]) begin
                     // fully-transparent row: nothing to flush
+                    pending[flush_sel] <= 1'b0;
+                    flush_sel <= ~flush_sel;
                 end
-                else if (run_shadow) begin
+                else if (cap_shadow[flush_sel]) begin
                     // RMW span: read word, clear bit15 of valid lanes, write
                     dburst <= 8'd1;
                     drd    <= 1'b1;
@@ -376,7 +412,11 @@ always @(posedge clk) begin
             // independent of the beat/mask decision so that the active
             // DDRAM write-data path does not inherit that control cone.
             ddin <= run_ram_q;
-            if (beat == beats) begin dwe <= 0; dst <= D_IDLE; end
+            if (beat == beats) begin
+                dwe <= 0; dst <= D_IDLE;
+                pending[flush_sel] <= 1'b0;
+                flush_sel <= ~flush_sel;
+            end
             else if (run_next_mask == 4'b0000) begin
                 // Transparent/clipped holes can leave complete 64-bit words
                 // empty between the run's first and last written pixels.
@@ -405,6 +445,8 @@ always @(posedge clk) begin
             end
             else if (beat == beats) begin
                 dst <= D_IDLE;
+                pending[flush_sel] <= 1'b0;
+                flush_sel <= ~flush_sel;
             end
             else begin
                 beat  <= beat + 1'd1;
@@ -433,7 +475,11 @@ always @(posedge clk) begin
         end
         D_SH_W: if (!DDRAM_BUSY) begin
             dwe <= 1'b0;
-            if (beat == beats) dst <= D_IDLE;
+            if (beat == beats) begin
+                dst <= D_IDLE;
+                pending[flush_sel] <= 1'b0;
+                flush_sel <= ~flush_sel;
+            end
             else begin
                 beat   <= beat + 1'd1;
                 run_word_q <= run_word_q + 1'd1;
@@ -464,6 +510,8 @@ always @(posedge clk) begin
             end
             else if (beat == beats) begin
                 dst <= D_IDLE;
+                pending[flush_sel] <= 1'b0;
+                flush_sel <= ~flush_sel;
             end
             else begin
                 beat  <= beat + 1'd1;
@@ -581,18 +629,19 @@ end
 endmodule
 
 // ---------------------------------------------------------------------------
-// 128 x 64 captured-run RAM.  Port A writes one 16-bit pixel lane per clock;
-// port B returns a complete DDR word one clock after rd_addr is presented.
+// 256 x 64 captured-run RAM (two 128-word ping-pong contexts selected by the
+// address MSB).  Port A writes one 16-bit pixel lane per clock; port B returns
+// a complete DDR word one clock after rd_addr is presented.
 // Quartus' integrated-synthesis macro selects the Cyclone V primitive, while
 // normal simulators use the cycle-equivalent behavioural array.
 // ---------------------------------------------------------------------------
 module s32_fb_run_ram (
     input              clk,
     input              wr_en,
-    input       [6:0]  wr_addr,
+    input       [7:0]  wr_addr,
     input       [1:0]  wr_lane,
     input      [15:0]  wr_data,
-    input       [6:0]  rd_addr,
+    input       [7:0]  rd_addr,
     output     [63:0]  rd_q
 );
 
@@ -626,11 +675,11 @@ altsyncram ram (
     .rden_b(1'b1)
 );
 defparam
-    ram.numwords_a = 128,
-    ram.widthad_a = 7,
+    ram.numwords_a = 256,
+    ram.widthad_a = 8,
     ram.width_a = 64,
-    ram.numwords_b = 128,
-    ram.widthad_b = 7,
+    ram.numwords_b = 256,
+    ram.widthad_b = 8,
     ram.width_b = 64,
     ram.address_reg_b = "CLOCK1",
     ram.clock_enable_input_a = "BYPASS",
@@ -645,13 +694,13 @@ defparam
     ram.read_during_write_mode_mixed_ports = "DONT_CARE",
     ram.width_byteena_a = 8;
 `else
-reg [63:0] mem [0:127];
+reg [63:0] mem [0:255];
 reg [63:0] rd_q_r;
 assign rd_q = rd_q_r;
 
 integer __run_init;
 initial begin
-    for (__run_init = 0; __run_init < 128; __run_init = __run_init + 1)
+    for (__run_init = 0; __run_init < 256; __run_init = __run_init + 1)
         mem[__run_init] = 64'd0;
 end
 

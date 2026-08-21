@@ -22,6 +22,7 @@ module tb_core_lint;
         .sdr_p5_dout(64'h0), .sdr_p5_ack(1'b0),
         .fb_er_ack(1'b0), .fb_rd_ack(1'b0), .fb_rd_pix(16'hffff),
         .fb_wr_busy(1'b0),
+        .fb_wr_can_start(1'b1),
         .v25_prg_wr(1'b0), .v25_prg_waddr(16'h0), .v25_prg_wdata(8'h0),
         .eep_ld_wr(1'b0), .eep_ld_addr(6'h0), .eep_ld_data(16'h0), .eep_rd_addr(6'h0),
         .eep_upload(1'b0), .eep_modified(),

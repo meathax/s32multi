@@ -126,7 +126,8 @@ module s32_core #(
     output     [15:0] fb_wr_pix,
     output            fb_wr_end,
     output            fb_wr_shadow,   // run RMWs dest &= 0x7fff (V-10)
-    input             fb_wr_busy,     // fb_if still flushing previous run
+    input             fb_wr_busy,     // fb_if run(s) still queued/flushing
+    input             fb_wr_can_start, // fb_if capture context free for new row
     output            fb_er_req,
     output      [1:0] fb_er_buf,
     output      [7:0] fb_er_y,
@@ -671,6 +672,7 @@ s32_sprite #(
     .fb_wr_y(fb_wr_y), .fb_wr_valid(fb_wr_valid), .fb_wr_pix(fb_wr_pix),
     .fb_wr_end(fb_wr_end),
     .fb_wr_shadow(fb_wr_shadow), .fb_busy(fb_wr_busy),
+    .fb_can_start(fb_wr_can_start),
     .fb_er_req(fb_er_req), .fb_er_buf(fb_er_buf), .fb_er_y(fb_er_y),
     .fb_er_ack(fb_er_ack),
     .disp_buf(disp_buf), .scan_buf(spr_scan_buf)
@@ -706,6 +708,13 @@ wire fb_rd_kick = ce_pix && hcnt == 9'd16 &&
 wire [7:0] fb_next_y = (vcnt == 9'd261) ? (cfg_flip_y ? 8'd223 : 8'd0) :
                            (cfg_flip_y ? (8'd222 - vcnt[7:0])
                                        : (vcnt[7:0] + 8'd1));
+// Both scanout lanes are fixed to their own monitor's physical buffer, per
+// s32_sprite.sv's fb_wr_buf <= {d_mon, ~disp_buf[0]} write-side mapping
+// (bit1 = monitor 0/1, bit0 = the shared double-buffer flip -- one SWAP
+// command flips both monitors together). Declared before first use: ModelSim
+// vlog rejects a forward reference to a net inside a procedural block.
+wire [1:0] spr_scan_buf_a = {1'b0, ~disp_buf[0]};
+wire [1:0] spr_scan_buf_b = {1'b1, ~disp_buf[0]};
 always @(posedge clk_ram) begin
     if (rst) begin
         fb_rd_req_r <= 1'b0;
@@ -738,13 +747,6 @@ assign fb_rd_buf = fb_rd_buf_r;
 assign fb_rd_y   = fb_rd_y_r;
 assign fb_rd_x   = hcnt;
 
-// Both scanout lanes are fixed to their own monitor's physical buffer, per
-// s32_sprite.sv's fb_wr_buf <= {d_mon, ~disp_buf[0]} write-side mapping
-// (bit1 = monitor 0/1, bit0 = the shared double-buffer flip -- one SWAP
-// command flips both monitors together). status[6]/screen_sel no longer
-// steers which sprite data is fetched, only which screen is displayed.
-wire [1:0] spr_scan_buf_a = {1'b0, ~disp_buf[0]};
-wire [1:0] spr_scan_buf_b = {1'b1, ~disp_buf[0]};
 always @(posedge clk_ram) begin
     if (rst) begin
         fb_rd2_req_r <= 1'b0;

@@ -449,7 +449,7 @@ sdram sdram (
 );
 
 ////////////////////////////   FRAMEBUFFER   //////////////////////////////////
-wire        fbw_start, fbw_valid, fbw_end, fbw_shadow, fbw_busy;
+wire        fbw_start, fbw_valid, fbw_end, fbw_shadow, fbw_busy, fbw_can_start;
 wire        fbe_req, fbe_ack, fbr_req, fbr_ack, fbr2_req, fbr2_ack;
 wire  [1:0] fbw_buf, fbe_buf, fbr_buf, fbr2_buf;
 wire  [8:0] fbw_x, fbr_x;
@@ -463,7 +463,7 @@ s32_fb_if fb (
     .DDRAM_DIN(DDRAM_DIN), .DDRAM_BE(DDRAM_BE), .DDRAM_WE(DDRAM_WE),
     .wr_start(fbw_start), .wr_buf(fbw_buf), .wr_x(fbw_x), .wr_y(fbw_y),
     .wr_valid(fbw_valid), .wr_pix(fbw_pix), .wr_end(fbw_end),
-    .wr_shadow(fbw_shadow), .wr_busy(fbw_busy),
+    .wr_shadow(fbw_shadow), .wr_busy(fbw_busy), .wr_can_start(fbw_can_start),
     .er_req(fbe_req), .er_buf(fbe_buf), .er_y(fbe_y), .er_ack(fbe_ack),
     .rd_req(fbr_req), .rd_buf(fbr_buf), .rd_y(fbr_y), .rd_ack(fbr_ack),
     .rd_x(fbr_x), .rd_pix(fbr_pix),
@@ -612,6 +612,15 @@ wire [7:0] svc12 = ~{
 // rather than the cabinet Test line, so drive them from the same buttons —
 // physically equivalent to pressing the matching switch on the board.
 wire [7:0] svc34 = ~{2'b00, test_btn, svc_btn, 4'b0000};
+// Board B (screen B, joystick_1's own board) had its SERVICE12/34 hardcoded
+// to 8'hff -- never wired -- so its coin/start were permanently inactive.
+// joystick_1[12]/[11] already feed board A's coin2/start2 above (a leftover
+// from the pre-twin single-board 2-coin-door layout); board B is its own
+// single-player board, so it gets ITS OWN coin1/start1 from the same
+// joystick_1 buttons, with no second coin door (coin2_b/start2_b tied off).
+wire [7:0] svc12_b = ~{2'b00, 1'b0, joystick_1[11], 1'b0, joystick_1[12],
+                        test_btn, svc_btn};
+wire [7:0] svc34_b = ~{2'b00, test_btn, svc_btn, 4'b0000};
 // GA2's 4-player i8255 port C is MAME EXTRA3 (ppi.in_pc_callback -> "EXTRA3").
 // Base sets: bit0=Start3, bit1=Start4, bits[7:2] unused. The US sets (ga2u,
 // spidmanu, arabfgtu) instead read COIN1 on bit3 (0x08) and COIN2 on bit2
@@ -682,6 +691,7 @@ s32_core core (
     .fb_wr_start(fbw_start), .fb_wr_buf(fbw_buf), .fb_wr_x(fbw_x), .fb_wr_y(fbw_y),
     .fb_wr_valid(fbw_valid), .fb_wr_pix(fbw_pix), .fb_wr_end(fbw_end),
     .fb_wr_shadow(fbw_shadow), .fb_wr_busy(fbw_busy),
+    .fb_wr_can_start(fbw_can_start),
     .fb_er_req(fbe_req), .fb_er_buf(fbe_buf), .fb_er_y(fbe_y), .fb_er_ack(fbe_ack),
     .fb_rd_req(fbr_req), .fb_rd_buf(fbr_buf),
     .fb_rd_y(fbr_y), .fb_rd_ack(fbr_ack),
@@ -699,7 +709,7 @@ s32_core core (
     // INPUT_PORTS_START(orunners) P1_B/P2_B).
     .in_p1b(p_dig(joystick_1)),
     .in_p2b({5'h1f, ~joystick_1[8], ~joystick_1[7], ~joystick_1[6]}),
-    .in_portc_b(8'hff), .in_svc12_b(8'hff), .in_svc34_b(8'hff),
+    .in_portc_b(8'hff), .in_svc12_b(svc12_b), .in_svc34_b(svc34_b),
     .adc_ch(adc_ch),
     .ppi_pa(core_ppi_pa), .ppi_pb(core_ppi_pb), .ppi_pc(core_ppi_pc),
     .adc0_load(adc0_load),

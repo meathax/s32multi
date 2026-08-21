@@ -34,7 +34,7 @@ always @(posedge clk) begin
 end
 
 // Sprite -> framebuffer run/erase ports.
-wire        fbw_start, fbw_valid, fbw_end, fbw_shadow, fbw_busy;
+wire        fbw_start, fbw_valid, fbw_end, fbw_shadow, fbw_busy, fbw_can_start;
 wire [1:0]  fbw_buf;
 wire [8:0]  fbw_x;
 wire [7:0]  fbw_y;
@@ -62,7 +62,7 @@ s32_sprite sprite (
     .fb_wr_start(fbw_start), .fb_wr_buf(fbw_buf),
     .fb_wr_x(fbw_x), .fb_wr_y(fbw_y), .fb_wr_valid(fbw_valid),
     .fb_wr_pix(fbw_pix), .fb_wr_end(fbw_end),
-    .fb_wr_shadow(fbw_shadow), .fb_busy(fbw_busy),
+    .fb_wr_shadow(fbw_shadow), .fb_busy(fbw_busy), .fb_can_start(fbw_can_start),
     .fb_er_req(fbe_req), .fb_er_buf(fbe_buf), .fb_er_y(fbe_y),
     .fb_er_ack(fbe_ack), .disp_buf(disp_buf), .scan_buf(scan_buf)
 );
@@ -86,7 +86,7 @@ s32_fb_if #(.FB_BASE(32'h3000_0000)) fb (
     .DDRAM_DIN(dd_din), .DDRAM_BE(dd_be), .DDRAM_WE(dd_we),
     .wr_start(fbw_start), .wr_buf(fbw_buf), .wr_x(fbw_x), .wr_y(fbw_y),
     .wr_valid(fbw_valid), .wr_pix(fbw_pix), .wr_end(fbw_end),
-    .wr_shadow(fbw_shadow), .wr_busy(fbw_busy),
+    .wr_shadow(fbw_shadow), .wr_busy(fbw_busy), .wr_can_start(fbw_can_start),
     .er_req(fbe_req), .er_buf(fbe_buf), .er_y(fbe_y), .er_ack(fbe_ack),
     .rd_req(1'b0), .rd_buf(2'd0),
     .rd_y(8'd0), .rd_ack(),

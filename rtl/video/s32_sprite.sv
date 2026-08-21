@@ -62,7 +62,8 @@ module s32_sprite #(
     output reg [15:0] fb_wr_pix,
     output reg        fb_wr_end,
     output reg        fb_wr_shadow,  // this run RMWs dest &= 0x7fff (V-10)
-    input             fb_busy,       // previous run still flushing
+    input             fb_busy,       // any run still queued/flushing (drain)
+    input             fb_can_start,  // a capture context is free for a new row
     output reg        fb_er_req,
     output reg  [1:0] fb_er_buf,
     output reg  [7:0] fb_er_y,
@@ -631,7 +632,7 @@ always @(posedge clk) begin
                 yacc <= yacc + ystep;
                 rs <= R_ROW;
             end
-            else if (!fb_busy) begin   // wait out the previous run's flush
+            else if (fb_can_start) begin // wait for a free capture context
                 xacc <= 0;
                 dx <= 0;
                 rowtag_v <= 0;
@@ -855,6 +856,8 @@ always @(posedge clk) begin
             logic [3:0]  next_byteoff;
             logic        same_cache;
             logic        fast_continue;
+            logic [24:0] xacc_next;
+            logic        src_adv;
 
             // Pen extract: bits 31:28 of the BE word = leftmost pixel;
             // even source px = high nibble of its byte.
@@ -904,20 +907,30 @@ always @(posedge clk) begin
                 dx <= dx + 1'd1;
                 xacc <= xacc + xstep;
 
-                // The common unscaled path advances exactly one source pixel
-                // per destination pixel.  Preselect the following byte while
-                // this pixel is emitted, sustaining one output per clock.
-                // Cache boundaries, trailing clipping, scaling, and END codes
-                // retain the fully general R_PIXEL fallback above/next cycle.
+                // Fast path covers every xstep <= 1.0 (1:1 and magnified):
+                // the source index advances 0 or 1 pixel per destination
+                // pixel, so the following byte can be preselected while this
+                // pixel is emitted, sustaining one output per clock.  The
+                // incremental piw/wordi/byteoff updates below reproduce
+                // exactly what R_PIXEL would rederive from xacc_next.
+                // Cache boundaries, trailing clipping, minification, and END
+                // codes retain the fully general R_PIXEL fallback.
                 next_dx = dx + 1'd1;
-                next_sx_px = pixel_sx_px + 1'd1;
+                xacc_next = xacc + xstep;
+                src_adv = xacc_next[24:16] != xacc[24:16];
+                next_sx_px = {1'b0, xacc_next[24:16]};
                 next_scrx = d_flipx ? (pixel_scrx - 14'sd1)
                                         : (pixel_scrx + 14'sd1);
-                next_piw = (pixel_piw == pixel_piw_last)
+                next_piw = !src_adv ? pixel_piw
+                         : (pixel_piw == pixel_piw_last)
                          ? 3'd0 : (pixel_piw + 1'd1);
-                next_wordi = (pixel_piw == pixel_piw_last)
+                next_wordi = (src_adv && pixel_piw == pixel_piw_last)
                            ? (pixel_wordi + 1'd1) : pixel_wordi;
-                if (d_bpp8) begin
+                if (!src_adv) begin
+                    next_byteoff = pixel_byteoff;
+                    same_cache = 1'b1;
+                end
+                else if (d_bpp8) begin
                     next_byteoff = pixel_byteoff + 1'd1;
                     same_cache = pixel_byteoff != 4'hf;
                 end
@@ -936,7 +949,7 @@ always @(posedge clk) begin
                                $signed({7'b0, hpix}) - 1)
                            ? $signed(clip_r)
                            : $signed({7'b0, hpix}) - 1;
-                fast_continue = FAST_1X && (xstep == 25'h1_0000) &&
+                fast_continue = FAST_1X && (xstep <= 25'h1_0000) &&
                                 (next_dx < d_dstw) && rowtag_v &&
                                 same_cache &&
                                 ((!d_flipx && next_scrx <= clip_x_max) ||

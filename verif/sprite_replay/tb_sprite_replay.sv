@@ -87,6 +87,9 @@ s32_sprite #(.VERIFY_SROM(1'b1)) dut (
     .fb_wr_valid(fb_wr_valid), .fb_wr_pix(fb_wr_pix),
     .fb_wr_end(fb_wr_end), .fb_wr_shadow(fb_wr_shadow),
     .fb_busy(fb_busy),
+    // Replay keeps the historical serialized handshake: a new row may start
+    // exactly when the previous flush has drained.
+    .fb_can_start(!fb_busy),
     .fb_er_req(fb_er_req), .fb_er_buf(fb_er_buf),
     .fb_er_y(fb_er_y), .fb_er_ack(fb_er_ack),
     .disp_buf(disp_buf), .scan_buf()
