@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "PowerShell(Get-Process quartus_fit,quartus_asm,quartus_sta -ErrorAction SilentlyContinue | Select-Object Name,@{n='CPUmin';e={[math]::Round\\($_.CPU/60,1\\)}} | Format-Table -AutoSize | Out-String; \"rbf mtime:\"; \\(Get-Item 'D:\\\\Arcade\\\\AI\\\\s32\\\\output_files\\\\Arcade-SegaSystem32.rbf'\\).LastWriteTime)",
-      "Bash(wsl.exe -d Ubuntu -- bash -lc 'grep -iE \"Slack|Fmax|Clock Setup|worst\" /mnt/d/Arcade/AI/s32/output_files/Arcade-SegaSystem32.sta.rpt 2>/dev/null | grep -iE \"slack|clk_ram|clk_sys\" | head -10; echo \"=== or the summary block ===\"; sed -n \"/Setup Summary/,/Hold Summary/p\" /mnt/d/Arcade/AI/s32/output_files/Arcade-SegaSystem32.sta.rpt 2>/dev/null | head -20')"
-    ]
-  }
-}

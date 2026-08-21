@@ -1,7 +1,0 @@
-set_global_assignment -name FAMILY "Cyclone V"
-set_global_assignment -name DEVICE 5CSEBA6U23I7
-set_global_assignment -name TOP_LEVEL_ENTITY s32_eeprom93c46
-set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/s32_pkg.sv
-set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/io/s32_io.sv
-set_global_assignment -name OPTIMIZATION_MODE "AGGRESSIVE AREA"
-set_global_assignment -name OPTIMIZATION_TECHNIQUE AREA

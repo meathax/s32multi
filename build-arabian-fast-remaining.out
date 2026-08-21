@@ -1,8 +1,0 @@
-D:\Arcade\AI\s32\tools\invoke-build-locked.ps1 : Another Sega System 32 Quartus build is already active in 
-D:\Arcade\AI\s32.
-At D:\Arcade\AI\s32\tools\invoke-build-locked.ps1:137 char:5
-+     Write-Error $_
-+     ~~~~~~~~~~~~~~
-    + CategoryInfo          : NotSpecified: (:) [Write-Error], WriteErrorException
-    + FullyQualifiedErrorId : Microsoft.PowerShell.Commands.WriteErrorException,invoke-build-locked.ps1
- 

@@ -1,8 +1,0 @@
-vsim (t29_audio_mix_diff_ga) exited with code 12. See D:\Arcade\AI\s32\verif\modelsim-regression.log
-At D:\Arcade\AI\s32\verif\run_regression.ps1:94 char:9
-+         throw "$Label exited with code $exitCode. See $LogPath"
-+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    + CategoryInfo          : OperationStopped: (vsim (t29_audio...-regression.log:String) [], RuntimeException
-    + FullyQualifiedErrorId : vsim (t29_audio_mix_diff_ga) exited with code 12. See D:\Arcade\AI\s32\verif\modelsim-re 
-   gression.log
- 

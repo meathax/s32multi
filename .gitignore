@@ -35,6 +35,7 @@ simulation/
 verif/quartus_ram_infer/*/*.rpt
 verif/quartus_ram_infer/*/*.summary
 *.rbf
+!/releases/**/*.rbf
 *.qws
 *_assignment_defaults.qdf
 work/
@@ -79,8 +80,6 @@ sim_wram_*.hex
 cr_ie_info.json
 serv_req_info.txt
 
-# built bitstreams (distribute via Releases, not git)
-releases/*.rbf
 output_files/
 __pycache__/
 /mra_goldenaxe_rbf/
