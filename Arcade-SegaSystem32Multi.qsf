@@ -65,7 +65,15 @@ set_global_assignment -name PHYSICAL_SYNTHESIS_REGISTER_DUPLICATION OFF
 # (V60 FP unit + s32_v25 HLE mailbox removed): bit-identical -0.083/-0.115 ns
 # slack to retiming OFF. Confirmed a genuine no-op regardless of resource
 # shape, same as the earlier universal-profile tests. Reverted.
-set_global_assignment -name PHYSICAL_SYNTHESIS_REGISTER_RETIMING OFF
+# 2026-08-21: re-tried on the current netlist (post board-B wiring, post
+# sdram-write-mux hold SDC fix) against the NEW failing path (pll_hdmi
+# divclk, internal to vendored ascal, o_vacpt->o_vpixq_pre, was -0.166 ns
+# Slow 100C / -0.500 ns Slow -40C). UNLIKE the 2026-08-06 test (a proven
+# no-op on that build's different failing path), this closed it: all 4 STA
+# corners setup+hold positive (worst +0.104 ns), 0 errors/0 warnings,
+# Critical Warning 332148 gone entirely. ALM unchanged (98%, 41097/41910).
+# Real fitter-level fix, no RTL/behavior change, license-free. Keeping ON.
+set_global_assignment -name PHYSICAL_SYNTHESIS_REGISTER_RETIMING ON
 set_global_assignment -name OPTIMIZATION_TECHNIQUE SPEED
 set_global_assignment -name MUX_RESTRUCTURE ON
 set_global_assignment -name REMOVE_REDUNDANT_LOGIC_CELLS ON
@@ -77,6 +85,24 @@ set_global_assignment -name PRE_MAPPING_RESYNTHESIS ON
 set_global_assignment -name ROUTER_CLOCKING_TOPOLOGY_ANALYSIS ON
 set_global_assignment -name ROUTER_TIMING_OPTIMIZATION_LEVEL NORMAL
 set_global_assignment -name ECO_OPTIMIZE_TIMING ON
+# 2026-08-20: diagnosed via one-off quartus_sta -t get_timing_paths report
+# (user-approved) that the persistent hold failures across all seeds (6, 1,
+# 2, 3) are two internal same-clock, zero-logic-level register-to-register
+# paths -- s32_sdram_write_mux2.d_addr/d_data/d_be -> sdram.wr_addr_p/
+# wr_din_p/wr_be_p, and s32_vram.reg_1ff02[8] -> s32_core.tm_r1ff02[8].
+# Tried OPTIMIZE_HOLD_TIMING="ALL PATHS" first, expecting the default "IO
+# Paths and Minimum TPD Paths" scope was excluding these internal paths;
+# measured ZERO effect (bit-identical STA numbers to the unset default), so
+# that theory was wrong -- removed rather than keeping dead config. The real
+# fix is the sdram-write-mux multicycle-hold SDC exception in
+# Arcade-SegaSystem32Multi.sdc (RTL-proven: wr_req_d is a 1-cycle delay of
+# wr_req, so real capture is always 1 full cycle after the mux registers
+# settle, not the same edge TimeQuest's default hold check assumes). That
+# closed the sdram_write_mux family (-0.272 -> path no longer worst). The
+# remaining reg_1ff02->tm_r1ff02 hold miss (-0.238 ns, CPU-write racing a
+# once-per-scanline snapshot pulse, same clock domain, self-correcting,
+# cosmetic-only worst case) is accepted as a reviewed exception -- see the
+# final build report for the full risk analysis and user sign-off.
 set_global_assignment -name PERIPHERY_TO_CORE_PLACEMENT_AND_ROUTING_OPTIMIZATION ON
 set_global_assignment -name PHYSICAL_SYNTHESIS_ASYNCHRONOUS_SIGNAL_PIPELINING ON
 set_global_assignment -name ALM_REGISTER_PACKING_EFFORT MEDIUM
@@ -150,6 +176,42 @@ set_global_assignment -name ALM_REGISTER_PACKING_EFFORT MEDIUM
 # +0.092/+0.141, Fast 100C +2.284/+0.133, Fast -40C +2.575/+0.099 (setup/hold
 # ns). 0 errors, 0 warnings. Bit-identical RBF hash reproducibility confirmed
 # (CleanGenerated + full compile matched the first pass, af633a43...9046).
+# 2026-08-20 splitscreen composer merge (netlist grew again): seed 6 now
+# misses HOLD only on emu|pll|pll_inst|.../general[0].gpll~PLL_OUTPUT_COUNTER
+# |divclk (clk_sys) across all 4 corners, worst -0.272 ns Slow 100C (TNS
+# -0.977, single endpoint family). Setup/recovery/removal/MPW all clean.
+# Re-running the seed exploration (max 3 additional) on this netlist.
+# Seed 1: closes hold (+0.057/+0.111/+0.124/+0.245 ns) but breaks setup on
+# Slow corners (-0.412 Slow 100C, -0.641 Slow -40C).
+# Seed 2: closes hold (+0.114/+0.132/+0.223/+0.244 ns, ALM 95%->97%) but still
+# breaks setup on Slow corners (-0.506 Slow 100C, -0.492 Slow -40C) -- same
+# hold-fix/setup trade-off as seed 1, worse than seed 6 baseline's -0.272 ns
+# hold-only miss. Trying seed 3, the last allowed additional seed.
+# Seed 3: closes hold (+0.070/+0.132/+0.162/+0.244 ns, ALM back to 95%) but
+# setup still fails Slow corners (-0.428 Slow 100C, -0.218 Slow -40C) --
+# smaller than seed 1/2's setup break but not closed. All 3 allowed seeds
+# tried, none close both setup+hold. Reverting to seed 6 (smallest violation
+# of any explored: -0.272 ns hold-only, single clk_sys endpoint family) as
+# the base for a targeted structural fix once the exact failing path is
+# named via a one-off quartus_sta -t diagnostic (user-approved 2026-08-20).
+# 2026-08-20 (post multicycle-hold SDC fix): hold now closes fully at seed 6
+# (all 4 corners positive). Fresh clean full compile placement shifted
+# slightly vs. the validating incremental fit and exposed a NEW, unrelated
+# setup miss confined entirely to vendored ascal (video scaler) framework
+# code (o_vacpt->o_vpixq_pre, worst -0.264 ns Slow -40C) -- placement
+# congestion at 95% ALM, not a core RTL defect; ascal is not ours to modify.
+# Trying seed exploration on this now-fixed baseline (fresh attempt).
+# Seed 1: WORSE -- hold regresses (-0.249/-0.132/-0.081/-0.087 ns, no longer
+# clean) and setup still fails. Seed changes reshuffle placement broadly and
+# can expose new marginal same-edge hold pairs even with the sdram-write-mux
+# exception in place (that exception is unconditional and still correct; it
+# just doesn't cover every possible near-zero-logic pair in the design).
+# Reverting to seed 6, the best point found: hold fully clean on all 4
+# corners, only the vendored-ascal setup miss remains (-0.264 ns worst,
+# congestion-induced placement noise in framework code, not core RTL).
+# Reproduced twice; seed 1 regressed hold and was reverted. User accepted
+# the ascal setup miss as a reviewed exception 2026-08-20 -- see final build
+# report. Final release seed.
 set_global_assignment -name SEED 6
 # 2026-08-13: dropped from 8 to 2.  At 8, quartus_map and quartus_fit both died
 # with `*** Fatal Error: Access Violation` on this host; the fitter's stack
@@ -476,3 +538,14 @@ set_instance_assignment -name WEAK_PULL_UP_RESISTOR ON -to SDIO_DAT[*]
 set_instance_assignment -name WEAK_PULL_UP_RESISTOR ON -to SD_SPI*
 set_instance_assignment -name WEAK_PULL_UP_RESISTOR ON -to USER_IO[*]
 set_instance_assignment -name WEAK_PULL_UP_RESISTOR ON -to VGA_EN
+
+# 2026-08-21: tried a floating auto-sized LogicLock region around the ascal
+# instance to close a setup miss on pll_hdmi divclk (o_vacpt->o_vpixq_pre,
+# both endpoints internal to vendored ascal). QSF syntax eventually parsed
+# clean (needed -section_id on every LL_* assignment, not just the trio),
+# but the fit log showed Critical Warning (140003): "Current license file
+# does not support LogicLock regions. The Quartus Prime software removes
+# all the LogicLock regions in your design automatically." This is Quartus
+# Prime Lite -- LogicLock is a subscription-only feature here and gets
+# silently stripped, so that fit was functionally identical to baseline.
+# Reverted; not a usable lever on this license.

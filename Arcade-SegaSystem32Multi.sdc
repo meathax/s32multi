@@ -127,6 +127,34 @@ if {[s32_require [expr {[get_collection_size $sprite_deferred_sources] > 0 && \
     set_multicycle_path -hold  1 -from $sprite_deferred_sources -to $sprite_regs
 }
 
+# 2026-08-20: s32_sdram_write_mux2's d_addr/d_data/d_be and its d_req output
+# register together on the SAME edge (Arcade-SegaSystem32Multi.sv wires
+# d_req/d_addr/d_data/d_be straight to sdram.sv's wr_req/wr_addr/wr_din/
+# wr_be, zero logic between). sdram.sv only ever captures them on
+# `wr_req && !wr_req_d`, and wr_req_d <= wr_req unconditionally every cycle
+# (sdram.sv:222) -- a plain 1-cycle delay of wr_req itself. That guarantees
+# wr_req_d is still the PRE-transaction value (0) on the very edge d_req/
+# d_addr/d_data/d_be first become valid, so the earliest wr_req&&!wr_req_d
+# can fire is the NEXT edge, by which point the mux's outputs have already
+# been stable for a full clk_sys period. TimeQuest's default same-edge hold
+# check can't see that CE-timing proof and flags this whole path family
+# (worst -0.272 ns on d_addr, seed 6) as if capture could race the launch
+# edge. Setup keeps its default (1) -- the true capture edge really is the
+# very next one, unchanged; only the hold reference edge needs pushing out
+# by the one proven cycle of margin.
+set sdmux_src [get_registers -nowarn \
+    {*|s32_sdram_write_mux2:sdram_write_mux|d_addr[*] \
+     *|s32_sdram_write_mux2:sdram_write_mux|d_data[*] \
+     *|s32_sdram_write_mux2:sdram_write_mux|d_be[*]}]
+set sdmux_dst [get_registers -nowarn \
+    {*|sdram:sdram|wr_addr_p[*] *|sdram:sdram|wr_din_p[*] \
+     *|sdram:sdram|wr_be_p[*]}]
+if {[s32_require [expr {[get_collection_size $sdmux_src] > 0 && \
+                        [get_collection_size $sdmux_dst] > 0}] \
+        "sdram write-mux registers for the edge-detect CE timing constraint"]} {
+    set_multicycle_path -hold 1 -from $sdmux_src -to $sdmux_dst
+}
+
 # The NEC V25 (s80x86) runs on clk_v25 = outclk3 (clk_sys/2, 24.158653 MHz) so its
 # large core meets timing with real margin.  Its two crossings to the clk_sys/
 # clk_ram world -- the SDRAM p5 line fetch and the V60-side mailbox port -- are
