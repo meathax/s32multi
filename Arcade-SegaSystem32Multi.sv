@@ -688,12 +688,15 @@ s32_core core (
     .out_lamps()
 );
 
-assign AUDIO_L = aud_l;
-assign AUDIO_R = aud_r;
+wire splitscreen_en = status[38];
+s32_monitor_audio_route monitor_audio_route (
+    .monitor_a(aud_l), .monitor_b(aud_r),
+    .screen_sel(status[6]), .splitscreen(splitscreen_en),
+    .audio_l(AUDIO_L), .audio_r(AUDIO_R)
+);
 
 //////////////////////////////   VIDEO   //////////////////////////////////////
 wire [23:0] game_rgb = status[6] ? rgb_b : rgb_a;
-wire splitscreen_en = status[38];
 
 // Splitscreen composer: mix0/mix1 already render both screens every native
 // frame (see s32_core.sv fb_rd2_* comment) -- this places them side by side
