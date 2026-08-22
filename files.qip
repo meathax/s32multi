@@ -20,7 +20,6 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/s32_mixer.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/s32_palette.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/s32_video.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/s32_splitscreen_composer.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/crt_adjust.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio/s32_audio_mix.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio/s32_soundsys.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio/s32_audio_ce.sv

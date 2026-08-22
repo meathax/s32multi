@@ -129,15 +129,13 @@ wire [24:0] ps2_mouse;
 // chips on two JAMMA edges, two 315-5388/5242 video paths, a V70 at 20 MHz,
 // the 837-7536 analog PCB, no V25 MCU, no protection responder.
 always @(*) begin
-    active_board = board_desc;
+    active_board = '0;
     active_board.multi32          = 1'b1;
     active_board.has_adc          = 1'b1;
-    active_board.has_ppi          = 1'b0;
-    active_board.has_motor_hle    = 1'b0;
-    active_board.gun_aim          = 1'b0;
-    active_board.coin_swap        = 1'b0;
-    active_board.flip_y           = 1'b0;
-    active_board.gear_toggle      = 1'b0;
+    active_board.analog_profile   = ANALOG_DRIVING;
+    active_board.sprite_bank_valid = 1'b1;
+    active_board.sprite_bank_mask = 2'b11;
+    active_board.digital_profile  = DIGITAL_GENERIC;
 end
 
 assign VGA_F1 = 0;
@@ -167,10 +165,8 @@ localparam CONF_STR = {
     "O[2:1],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
     "O[5:3],Scandoubler Fx,None,CRT 25%,CRT 50%,CRT 75%;",
     "-;",
-`ifndef S32_SYSTEM32_ONLY
     "O[6],Screen (Multi32),A,B;",
     "O[38],Splitscreen,Off,On;",
-`endif
     "O[7],Service Mode,Off,On;",
     // status[8], status[30:34], status[36:37] were the lightgun/GunCon SNAC
     // options (Sinden Borders, Gun Crosshair, Gun Sensitivity, P1/P2 Gun
@@ -183,10 +179,6 @@ localparam CONF_STR = {
     // (Scale = status[28:27], etc.) keeps its existing meaning for users with
     // saved settings.
     "-;",
-    "O[9],CRT Adjust,Off,On;",
-    "H1O[14:10],CRT H-Size,0,+1,+2,+3,+4,+5,+6,+7,+8,+9,+10,+11,+12,+13,+14,+15,-16,-15,-14,-13,-12,-11,-10,-9,-8,-7,-6,-5,-4,-3,-2,-1;",
-    "H1O[21:15],CRT H-Position,0,+1,+2,+3,+4,+5,+6,+7,+8,+9,+10,+11,+12,+13,+14,+15,+16,+17,+18,+19,+20,+21,+22,+23,+24,+25,+26,+27,+28,+29,+30,+31,+32,+33,+34,+35,+36,+37,+38,+39,+40,+41,+42,+43,+44,+45,+46,+47,+48,-48,-47,-46,-45,-44,-43,-42,-41,-40,-39,-38,-37,-36,-35,-34,-33,-32,-31,-30,-29,-28,-27,-26,-25,-24,-23,-22,-21,-20,-19,-18,-17,-16,-15,-14,-13,-12,-11,-10,-9,-8,-7,-6,-5,-4,-3,-2,-1;",
-    "H1O[26:22],CRT V-Shift,0,+1,+2,+3,+4,+5,+6,+7,+8,+9,+10,+11,+12,+13,+14,+15,-16,-15,-14,-13,-12,-11,-10,-9,-8,-7,-6,-5,-4,-3,-2,-1;",
     "O[28:27],Scale,Normal,V-Integer,HV-Integer;",
     "-;",
     "R[0],Reset;",
@@ -322,8 +314,7 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io (
 
     .buttons(buttons),
     .status(status),
-    // H1 CRT controls remain hidden until CRT Adjust is enabled.
-    .status_menumask({14'd0, ~status[9], 1'b0}),
+    .status_menumask(16'd0),
 
     .ioctl_download(ioctl_download),
     .ioctl_upload(ioctl_upload),
@@ -379,9 +370,6 @@ wire        mem_sw_req, mem_sw_ack;
 wire [24:1] mem_sw_addr;
 wire [15:0] mem_sw_din;
 wire  [1:0] mem_sw_be;
-wire        v25_wr;
-wire [15:0] v25_waddr;
-wire  [7:0] v25_wdata;
 wire        eep_wr;
 wire  [5:0] eep_waddr;
 wire [15:0] eep_wdata;
@@ -400,7 +388,6 @@ s32_rom_loader #(.WIDE(1), .CLEAR_RF_WAVE(0)) loader (
     .board_desc(board_desc),
     .sdr_wr_req(sw_req), .sdr_wr_addr(sw_addr), .sdr_wr_din(sw_din),
     .sdr_wr_be(sw_be), .sdr_wr_ack(sw_ack),
-    .v25_wr(v25_wr), .v25_waddr(v25_waddr), .v25_wdata(v25_wdata),
     .eep_wr(eep_wr), .eep_waddr(eep_waddr), .eep_wdata(eep_wdata),
     .eep_loaded(), .rom_loaded(rom_loaded)
 );
@@ -485,8 +472,6 @@ wire [7:0] p1a_dig = p_dig(joystick_0);
 // the MSM6253 channels for every driving cabinet, so sourcing Light/Wiper from
 // them made one button do two unrelated things at once.  Rad Mobile now offers
 // the same assignable Accelerate/Brake pair as Rad Rally and Slip Stream.
-wire [7:0] radm_p1a = {p1a_dig[7:3], ~joystick_0[7],
-                        ~joystick_0[6], 1'b1};
 wire [7:0] p2a_dig = p_dig(joystick_1);
 
 // No lightgun, GunCon SNAC, or positional-gun cabinet on this board: those
@@ -495,27 +480,7 @@ wire [7:0] p2a_dig = p_dig(joystick_1);
 // active_board above, so every branch that used to key off them is gone too.
 assign USER_OUT = 7'h7f;
 
-// Rad Rally and Slip Stream expose a single cabinet Gear Change toggle, not a
-// momentary switch or four-position encoding.  Keep this semantic independent
-// from Rad Rally's separate EPR-14084 communication-board selector.
-reg radr_gear = 1'b0;
-reg radr_gear_btn_d = 1'b0;
-always @(posedge clk_sys) begin
-    if (reset || !active_board.gear_toggle) begin
-        radr_gear <= 1'b0;
-        radr_gear_btn_d <= joystick_0[6];
-    end
-    else begin
-        radr_gear_btn_d <= joystick_0[6];
-        if (joystick_0[6] && !radr_gear_btn_d)
-            radr_gear <= ~radr_gear;
-    end
-end
-wire [7:0] gear_toggle_p1a = {p1a_dig[7:1], ~radr_gear};
-
-wire [7:0] core_p1a = active_board.gear_toggle ? gear_toggle_p1a :
-                       (active_board.digital_profile == DIGITAL_RADM) ? radm_p1a :
-                       p1a_dig;
+wire [7:0] core_p1a = p1a_dig;
 // OutRunners routes PLAYER 1's music keys through the P2_A port (MAME
 // INPUT_PORTS_START(orunners): P2_A bit0 = P1 DJ/music, bit1 = P1 track <<,
 // bit2 = P1 track >>). Feeding p2a_dig (the second player's shift buttons)
@@ -537,8 +502,8 @@ wire       adc0_load;
 s32_driving_controls driving_controls (
     .clk(clk_sys),
     .rst(reset),
-    .capture_wheel(active_board.digital_profile == DIGITAL_RADM),
-    .wheel_sample(adc0_load),
+    .capture_wheel(1'b0),
+    .wheel_sample(1'b0),
     .left_x(joystick_l_analog_0[7:0]),
     .right_y(joystick_r_analog_0[15:8]),
     // Dedicated assignable Accelerate/Brake buttons (MRA buttons 6/7,
@@ -594,33 +559,34 @@ assign adc_ch[6] = driving_accel_p2;   // ANALOG7: P2 accel (bank 1)
 assign adc_ch[7] = driving_brake_p2;   // ANALOG8: P2 brake (bank 1)
 // MAME system32_generic: port C is unused; port E/SERVICE12 is
 // {unknown[7:6], start2, start1, coin2, coin1, test, service}, active low.
-// Test = the OSD "Service Mode" toggle OR the mappable Test button (j12);
-// Service (coin-service credit) = the mappable Service button (j13).
+// Test = the OSD "Service Mode" toggle OR the local cockpit's mappable Test
+// button (j13). Service (coin-service credit) is likewise local to each
+// cockpit's Service button (j14). Keep the OSD toggle global, but never OR
+// the two physical control panels together: the two 315-5296 chips have
+// independent service menus on the real Multi 32 board.
 wire [7:0] portc = 8'hff;
-wire test_btn = status[7] | joystick_0[13] | joystick_1[13];
-wire svc_btn  = joystick_0[14] | joystick_1[14];
+wire test_btn_a = status[7] | joystick_0[13];
+wire svc_btn_a  = joystick_0[14];
+wire test_btn_b = status[7] | joystick_1[13];
+wire svc_btn_b  = joystick_1[14];
 wire [7:0] svc12 = ~{
                       2'b00,
                       joystick_1[11],
                       joystick_0[11],
                       joystick_1[12],
                       joystick_0[12],
-                      test_btn, svc_btn};
+                      test_btn_a, svc_btn_a};
 // Port F/SERVICE34: bits 3:0 = DIP SW1:1-4 (Off), bit4 = PCB Push SW1
 // (Service), bit5 = PCB Push SW2 (Test), bit6 unknown; bit7 is replaced by the
 // EEPROM DO line inside s32_core.  Some games poll the PCB push switches
 // rather than the cabinet Test line, so drive them from the same buttons —
 // physically equivalent to pressing the matching switch on the board.
-wire [7:0] svc34 = ~{2'b00, test_btn, svc_btn, 4'b0000};
-// Board B (screen B, joystick_1's own board) had its SERVICE12/34 hardcoded
-// to 8'hff -- never wired -- so its coin/start were permanently inactive.
-// joystick_1[12]/[11] already feed board A's coin2/start2 above (a leftover
-// from the pre-twin single-board 2-coin-door layout); board B is its own
-// single-player board, so it gets ITS OWN coin1/start1 from the same
-// joystick_1 buttons, with no second coin door (coin2_b/start2_b tied off).
+wire [7:0] svc34 = ~{2'b00, test_btn_a, svc_btn_a, 4'b0000};
+// Board B (screen B, joystick_1's own board) gets its own service/test pair,
+// coin and start. Its second coin door/start lane is not wired on OutRunners.
 wire [7:0] svc12_b = ~{2'b00, 1'b0, joystick_1[11], 1'b0, joystick_1[12],
-                        test_btn, svc_btn};
-wire [7:0] svc34_b = ~{2'b00, test_btn, svc_btn, 4'b0000};
+                        test_btn_b, svc_btn_b};
+wire [7:0] svc34_b = ~{2'b00, test_btn_b, svc_btn_b, 4'b0000};
 // GA2's 4-player i8255 port C is MAME EXTRA3 (ppi.in_pc_callback -> "EXTRA3").
 // Base sets: bit0=Start3, bit1=Start4, bits[7:2] unused. The US sets (ga2u,
 // spidmanu, arabfgtu) instead read COIN1 on bit3 (0x08) and COIN2 on bit2
@@ -698,7 +664,7 @@ s32_core core (
     .fb_rd_x(fbr_x), .fb_rd_pix(fbr_pix),
     .fb_rd2_req(fbr2_req), .fb_rd2_buf(fbr2_buf),
     .fb_rd2_y(fbr2_y), .fb_rd2_ack(fbr2_ack), .fb_rd2_pix(fbr2_pix),
-    .v25_prg_wr(v25_wr), .v25_prg_waddr(v25_waddr), .v25_prg_wdata(v25_wdata),
+    .v25_prg_wr(1'b0), .v25_prg_waddr(16'd0), .v25_prg_wdata(8'd0),
     .eep_ld_wr(eep_wr), .eep_ld_addr(eep_waddr), .eep_ld_data(eep_wdata),
     .eep_rd_data(eep_rd_data), .eep_rd_addr(eep_rd_addr),
     .eep_upload(eep_upload), .eep_modified(eep_modified),
@@ -726,13 +692,8 @@ assign AUDIO_L = aud_l;
 assign AUDIO_R = aud_r;
 
 //////////////////////////////   VIDEO   //////////////////////////////////////
-`ifdef S32_SYSTEM32_ONLY
-wire [23:0] game_rgb = rgb_a;
-wire splitscreen_en = 1'b0;
-`else
 wire [23:0] game_rgb = status[6] ? rgb_b : rgb_a;
 wire splitscreen_en = status[38];
-`endif
 
 // Splitscreen composer: mix0/mix1 already render both screens every native
 // frame (see s32_core.sv fb_rd2_* comment) -- this places them side by side
@@ -804,143 +765,14 @@ video_freak s32_video_freak (
     .SCALE     (scale_mode)
 );
 
-//////////////////////////// CRT ADJUST /////////////////////////////////////
-// Core-side integration of rmonic79/MiSTer-CRT-Adjust. The feature is gated
-// off when the framework HDMI scaler or CRT scandoubler is active: this keeps
-// the native CE cadence at the shared output boundary in those modes, where a
-// stretched read cadence can otherwise create a malformed HDMI raster.
-wire              crt_on     = status[9];
-wire signed [4:0] crt_hsize  = $signed(status[14:10]);
-wire        [6:0] crt_hpos   = status[21:15];
-wire signed [5:0] crt_vshift = $signed(status[26:22]);
-wire hdmi_output_active = (HDMI_WIDTH != 12'd0) || (HDMI_HEIGHT != 12'd0);
-// crt_adjust's HTOTAL/VTOTAL are hard-wired to the native single-screen
-// raster (512x262); the composer's doubled-width raster is incompatible
-// with it, so force CRT Adjust off whenever Splitscreen is on.
-wire crt_adjust_active = crt_on && !hdmi_output_active
-                       && (scandoubler_fx == 3'd0) && !splitscreen_en;
-
-// System 32's active window is line-anchored at x=0. HSync-shift mode avoids
-// moving the content out of the line buffer at the extreme H-Position values.
-// The OSD list has 97 ordinal choices: 0..48, then -48..-1. Decode that
-// ordinal explicitly; it is not a native 7-bit two's-complement field. The
-// module is sized for the 416-wide total; in 320-wide mode its 512-sample
-// HSync shifter needs the 512-410 total-line correction for negative offsets.
-wire signed [8:0] crt_hpos_native = (crt_hpos <= 7'd48)
-    ? $signed({2'b00, crt_hpos})
-    : $signed({2'b00, crt_hpos}) - 9'sd97;
-wire signed [8:0] crt_hpos_module = (!mode_416_active && crt_hpos_native[8])
-    ? crt_hpos_native - 9'sd102 : crt_hpos_native;
-
-wire [7:0] crt_r, crt_g, crt_b;
-wire crt_hs, crt_vs, crt_hb, crt_vb, crt_hs_ref;
-
-// clk_sys/pixel is 6 clocks (24 quarter-cycles) in 416 mode and 7.5 clocks
-// (30 quarter-cycles on average) in 320 mode. The quarter-cycle read period
-// preserves native width at hsize=0 and gives fine, uniform H-Size steps.
-reg [7:0] crt_rd_acc;
-reg crt_hs_ref_d;
-wire [7:0] crt_base_period = mode_416_active ? 8'd24 : 8'd30;
-wire [7:0] crt_rd_period = crt_base_period + {{3{crt_hsize[4]}}, crt_hsize};
-wire crt_rd_tick = (crt_rd_acc + 8'd4) >= {1'b0, crt_rd_period};
-wire crt_hs_ref_rise = crt_hs_ref & ~crt_hs_ref_d;
-always @(posedge clk_sys) begin
-    if (video_reset) begin
-        crt_rd_acc   <= 8'd0;
-        crt_hs_ref_d <= 1'b0;
-    end
-    else begin
-        crt_hs_ref_d <= crt_hs_ref;
-        if (crt_hs_ref_rise)
-            crt_rd_acc <= 8'd0;
-        else if (crt_rd_tick)
-            crt_rd_acc <= crt_rd_acc + 8'd4 - {1'b0, crt_rd_period};
-        else
-            crt_rd_acc <= crt_rd_acc + 8'd4;
-    end
-end
-wire crt_rd_ce = crt_adjust_active ? crt_rd_tick : ce_pix_core;
-
-crt_adjust #(
-    .VTOTAL   (262),
-    .HTOTAL   (512),
-    .HPOS_MODE(0),
-    .AW        (10)
-) u_crt_adjust (
-    .clk       (clk_sys),
-    .pxl_cen   (ce_pix_core),
-    .pxl2_cen  (crt_rd_ce),
-    .active    (crt_adjust_active),
-    .hsize     (crt_hsize),
-    .hoffset   (crt_hpos_module),
-    .voffset   (crt_vshift),
-    .r_in      (game_rgb[23:16]),
-    .g_in      (game_rgb[15:8]),
-    .b_in      (game_rgb[7:0]),
-    .hs_in     (core_hs),
-    .vs_in     (core_vs),
-    .hb_in     (core_hb | core_vb),
-    .vb_in     (core_vb),
-    .r_out     (crt_r),
-    .g_out     (crt_g),
-    .b_out     (crt_b),
-    .hs_out    (crt_hs),
-    .vs_out    (crt_vs),
-    .hb_out    (crt_hb),
-    .vb_out    (crt_vb),
-    .hs_ref_out(crt_hs_ref)
-);
-
-// Anchor the downstream OSD to the native active-region rising edge. If the
-// OSD DE followed the shifted/stretched window, H-Position would move the OSD
-// together with the game image.
-reg crt_hs_in_d, crt_native_active_d, crt_str_active_d;
-reg crt_vblank_1l, crt_de_osd;
-wire crt_hs_in_rise = core_hs & ~crt_hs_in_d;
-wire crt_native_active = ~(core_hb | crt_vblank_1l);
-wire crt_native_rise = crt_native_active & ~crt_native_active_d;
-wire crt_str_active = ~crt_hb;
-wire crt_str_fall = crt_str_active_d & ~crt_str_active;
-always @(posedge clk_sys) begin
-    if (video_reset) begin
-        crt_hs_in_d         <= 1'b0;
-        crt_native_active_d <= 1'b0;
-        crt_str_active_d    <= 1'b0;
-        crt_vblank_1l       <= 1'b0;
-        crt_de_osd          <= 1'b0;
-    end
-    else begin
-        crt_hs_in_d <= core_hs;
-        if (crt_hs_in_rise)
-            crt_vblank_1l <= core_vb;
-        if (ce_pix_core)
-            crt_native_active_d <= crt_native_active;
-        if (crt_rd_ce)
-            crt_str_active_d <= crt_str_active;
-        if (crt_native_rise)
-            crt_de_osd <= 1'b1;
-        else if (crt_str_fall)
-            crt_de_osd <= 1'b0;
-    end
-end
-
-// Generic JTFRAME-compatible crosshair/border decoration.  The framework's
-// ascal.vhd has no gun-border port in this repository revision, so keep the
-// native video timing untouched and decorate only the RGB stream.  CRT Adjust
-// can change the output geometry independently of the native gun coordinates;
-// suppress the crosshair in that optional mode rather than presenting a
-// silently misregistered sight.  The native (default) path is exact.
-// No lightgun overlay: OutRunners has no positional gun input, so the
-// crosshair/border decoration stage (s32_lightgun_overlay) is removed and
-// game_rgb (or the CRT Adjust path) drives VGA directly.
-wire [23:0] video_rgb_pre = crt_adjust_active ? {crt_r, crt_g, crt_b} : disp_rgb;
-
-assign CE_PIXEL = crt_adjust_active ? crt_rd_ce : disp_ce_pix;
-assign VGA_R  = video_rgb_pre[23:16];
-assign VGA_G  = video_rgb_pre[15:8];
-assign VGA_B  = video_rgb_pre[7:0];
-assign VGA_HS = crt_adjust_active ? crt_hs : disp_hs;
-assign VGA_VS = crt_adjust_active ? crt_vs : disp_vs;
-assign VGA_DE = crt_adjust_active ? crt_de_osd : ~(disp_hb | disp_vb);
+// OutRunners uses the native game raster directly. CRT geometry adjustment
+// is intentionally not part of this single-board production image.
+assign CE_PIXEL = disp_ce_pix;
+assign VGA_R  = disp_rgb[23:16];
+assign VGA_G  = disp_rgb[15:8];
+assign VGA_B  = disp_rgb[7:0];
+assign VGA_HS = disp_hs;
+assign VGA_VS = disp_vs;
+assign VGA_DE = ~(disp_hb | disp_vb);
 
 endmodule

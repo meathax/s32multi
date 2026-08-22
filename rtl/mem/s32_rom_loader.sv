@@ -2,24 +2,12 @@
 //  Sega System 32 — ioctl ROM loader  (DESIGN.md §9.3)
 //  Legacy stream layout (ioctl index 0):
 //    [0x00..0x3f]  board descriptor (64 bytes)
-//    [maincpu 2MB][soundcpu 4MB][tiles 4MB][multipcm 4MB][mcu 64KB]
-//    [sprites up to 16MB]
-//  (The MCU stream slot is exactly 64 KB — OFF_SPRITES = OFF_MCU + 0x10000;
-//  only the SDRAM slot it lands in spans 2 MB.)
-//  The MRA pads every region to its fixed size so offsets are constant.
-//  MCU bytes are address-descrambled into the reserved external-SDRAM slot,
-//  avoiding a duplicate 64 KiB on-chip ROM that cannot fit alongside the real
-//  V25. The inverse of MAME's destination-to-source address lookup is applied
-//  (see v25_stream_to_dst below and DESIGN.md §8.1).
-//  This repository's only supported set (OutRunners) has no V25, so
-//  tools/gen_mra.py never emits an index-8 MCU stream and this slot's
-//  consumption logic never fires. It is left in place -- pure address
-//  arithmetic, no RAM or logic cost -- rather than renumbering OFF_MCU/
-//  OFF_SPRITES and the generator's stream-offset contract for no resource
-//  gain.
-//  Optimized MRAs use index 4 main, 5 sound, 6 tiles, 7 PCM, 8 MCU and
-//  9 sprites. A descriptor-only index-0 transfer is emitted last so reset is
-//  released only after all populated regions have completed.
+//    [maincpu 2MB][soundcpu 4MB][tiles 4MB][multipcm 4MB][sprites up to 16MB]
+//  OutRunners has no V25/MCU region, so the reserved MCU aperture is not
+//  accepted and the stream jumps directly from MultiPCM to sprites. The MRA
+//  pads each region to its fixed stream offset. Optimized MRAs use index 4
+//  main, 5 sound, 6 tiles, 7 PCM and 9 sprites. A descriptor-only index-0
+//  transfer is emitted last so reset is released after all regions complete.
 //  ioctl index 2 = 93C46 default image (128 bytes).
 //============================================================================
 
@@ -93,30 +81,19 @@ integer    desc_i;
 // the fixed stream because those writes cannot yet be serviced.
 assign ioctl_wait = busy | wave_clear_active | ~mem_ready;
 
-// MAME describes the ROM as:
-//   descrambled[dst] = raw[bitswap(dst, 14,11,15,12,13,4,3,7,
-//                                        5,10,2,8,9,6,1,0)]
-// The ioctl loader visits raw source addresses in ascending order, so the
-// BRAM write address must use the inverse permutation: dst = inverse(src).
-// In particular, raw 0xFDDC (the GA2 reset-vector source) maps to 0xFFF0.
-function automatic [15:0] v25_stream_to_dst(input [15:0] i);
-    v25_stream_to_dst = { i[13], i[15], i[11], i[12], i[14], i[6], i[3], i[4],
-                          i[8],  i[2],  i[7],  i[10], i[9],  i[5], i[1], i[0] };
-endfunction
-
 // map stream offset -> sdram byte address
 function automatic [24:0] map_addr(input [26:0] a);
     if      (a < OFF_SOUNDCPU) map_addr = SDR_MAINCPU_BASE  + (a[24:0] - OFF_MAINCPU[24:0]);
     else if (a < OFF_TILES)    map_addr = SDR_SOUNDCPU_BASE + (a[24:0] - OFF_SOUNDCPU[24:0]);
     else if (a < OFF_MULTIPCM) map_addr = SDR_TILES_BASE    + (a[24:0] - OFF_TILES[24:0]);
     else if (a < OFF_MCU)      map_addr = SDR_MULTIPCM_BASE + (a[24:0] - OFF_MULTIPCM[24:0]);
-    else if (a < OFF_SPRITES)  map_addr = SDR_MCU_BASE +
-        {9'd0, v25_stream_to_dst(a[15:0] - OFF_MCU[15:0])};
     else                       map_addr = SDR_SPRITES_BASE + (a[24:0] - OFF_SPRITES[24:0]);
 endfunction
 
 function automatic is_rom_index(input [7:0] index);
-    is_rom_index = (index == 8'd0) || (index >= 8'd4 && index <= 8'd9);
+    is_rom_index = (index == 8'd0) ||
+                   (index == 8'd4) || (index == 8'd5) ||
+                   (index == 8'd6) || (index == 8'd7) || (index == 8'd9);
 endfunction
 
 function automatic [26:0] stream_addr(input [7:0] index, input [26:0] a);
@@ -125,7 +102,6 @@ function automatic [26:0] stream_addr(input [7:0] index, input [26:0] a);
         8'd5: stream_addr = OFF_SOUNDCPU + a;
         8'd6: stream_addr = OFF_TILES    + a;
         8'd7: stream_addr = OFF_MULTIPCM + a;
-        8'd8: stream_addr = OFF_MCU      + a;
         8'd9: stream_addr = OFF_SPRITES  + a;
         default: stream_addr = a;
     endcase
@@ -216,20 +192,6 @@ always @(posedge clk) begin
                             desc_r.comm_link_hle     <= desc_bytes[2][7];
                         end
                     end
-                    else if (a >= OFF_MCU && a < OFF_SPRITES) begin
-                        logic [24:0] ma;
-                        // The real V25 consumes the external SDRAM image;
-                        // this pulse invalidates its cache while reset is held.
-                        v25_wr    <= 1'b1;
-                        v25_waddr <= v25_stream_to_dst(a[15:0] - OFF_MCU[15:0]);
-                        v25_wdata <= ioctl_dout[7:0];
-                        ma = map_addr(a);
-                        sdr_wr_req  <= 1'b1;
-                        busy        <= 1'b1;
-                        sdr_wr_addr <= ma[24:1];
-                        sdr_wr_din  <= ioctl_dout;
-                        sdr_wr_be   <= 2'b11;
-                    end
                     else begin
                         sdr_wr_req <= 1'b1;
                         busy       <= 1'b1;
@@ -266,21 +228,6 @@ always @(posedge clk) begin
                             desc_r.gear_toggle       <= desc_bytes[1][7];
                             desc_r.digital_profile   <= desc_bytes[4][1:0];
                             desc_r.comm_link_hle     <= desc_bytes[2][7];
-                        end
-                    end
-                    else if (a >= OFF_MCU && a < OFF_SPRITES) begin
-                        logic [24:0] ma;
-                        v25_wr    <= 1'b1;
-                        v25_waddr <= v25_stream_to_dst(a[15:0] - OFF_MCU[15:0]);
-                        v25_wdata <= ioctl_dout[7:0];
-                        if (!ioctl_addr[0]) byte_lo <= ioctl_dout[7:0];
-                        else begin
-                            ma = map_addr(a);
-                            sdr_wr_req  <= 1'b1;
-                            busy        <= 1'b1;
-                            sdr_wr_addr <= ma[24:1];
-                            sdr_wr_din  <= {ioctl_dout[7:0], byte_lo};
-                            sdr_wr_be   <= 2'b11;
                         end
                     end
                     else begin

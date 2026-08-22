@@ -130,29 +130,23 @@ reg [6:0]  rbeat;
 reg [6:0]  run_word_q;
 wire        line_we  = (dst == D_RD_W) && DDRAM_DOUT_READY && !rd_active2;
 wire        line_we_b= (dst == D_RD_W) && DDRAM_DOUT_READY &&  rd_active2;
-wire [6:0]  line_waddr = rbeat;
 wire [63:0] line_wdata = DDRAM_DOUT;
-wire        line_we0 = line_we && !fill_bank;
-wire        line_we1 = line_we &&  fill_bank;
-wire        line_we2 = line_we_b && !fill_bank2;
-wire        line_we3 = line_we_b &&  fill_bank2;
 
-wire [63:0] line_q0, line_q1, line_q2, line_q3;
-s32_fb_line_ram line_ram0 (
-    .clk(clk), .wr_en(line_we0), .wr_addr(line_waddr),
-    .wr_data(line_wdata), .rd_addr(rd_x[8:2]), .rd_q(line_q0)
+// Pack each pair of ping-pong banks into one 256x64 RAM. The bank bit is
+// the RAM address MSB; this preserves the existing one-write/one-registered-
+// read timing while halving the number of line-memory instances.
+wire [7:0] line_waddr_a = {fill_bank,  rbeat};
+wire [7:0] line_waddr_b = {fill_bank2, rbeat};
+wire [7:0] line_raddr_a = {scan_bank,  rd_x[8:2]};
+wire [7:0] line_raddr_b = {scan_bank2, rd_x[8:2]};
+wire [63:0] line_q_a, line_q_b;
+s32_fb_line_ram_pair line_ram_a (
+    .clk(clk), .wr_en(line_we), .wr_addr(line_waddr_a),
+    .wr_data(line_wdata), .rd_addr(line_raddr_a), .rd_q(line_q_a)
 );
-s32_fb_line_ram line_ram1 (
-    .clk(clk), .wr_en(line_we1), .wr_addr(line_waddr),
-    .wr_data(line_wdata), .rd_addr(rd_x[8:2]), .rd_q(line_q1)
-);
-s32_fb_line_ram line_ram2 (
-    .clk(clk), .wr_en(line_we2), .wr_addr(line_waddr),
-    .wr_data(line_wdata), .rd_addr(rd_x[8:2]), .rd_q(line_q2)
-);
-s32_fb_line_ram line_ram3 (
-    .clk(clk), .wr_en(line_we3), .wr_addr(line_waddr),
-    .wr_data(line_wdata), .rd_addr(rd_x[8:2]), .rd_q(line_q3)
+s32_fb_line_ram_pair line_ram_b (
+    .clk(clk), .wr_en(line_we_b), .wr_addr(line_waddr_b),
+    .wr_data(line_wdata), .rd_addr(line_raddr_b), .rd_q(line_q_b)
 );
 
 `ifdef SIMULATION
@@ -173,8 +167,8 @@ always @(posedge clk) begin
 end
 `endif
 
-wire [63:0] rd_word  = scan_bank  ? line_q1 : line_q0;
-wire [63:0] rd_word2 = scan_bank2 ? line_q3 : line_q2;
+wire [63:0] rd_word  = line_q_a;
+wire [63:0] rd_word2 = line_q_b;
 assign rd_pix  = (rd_lane == 2'd0) ? rd_word[15:0]   :
                  (rd_lane == 2'd1) ? rd_word[31:16]  :
                  (rd_lane == 2'd2) ? rd_word[47:32]  : rd_word[63:48];
@@ -552,15 +546,16 @@ end
 endmodule
 
 // ---------------------------------------------------------------------------
-// 128 x 64 fetched-line RAM. Port A writes the complete DDR words for the
-// fill bank while port B serves scanout from the independently selected bank.
+// 256 x 64 fetched-line RAM. The address MSB selects one of two ping-pong
+// line banks; port A writes the fill bank while port B serves scanout from the
+// independently selected bank.
 // ---------------------------------------------------------------------------
-module s32_fb_line_ram (
+module s32_fb_line_ram_pair (
     input              clk,
     input              wr_en,
-    input       [6:0]  wr_addr,
+    input       [7:0]  wr_addr,
     input      [63:0]  wr_data,
-    input       [6:0]  rd_addr,
+    input       [7:0]  rd_addr,
     output     [63:0]  rd_q
 );
 
@@ -589,11 +584,11 @@ altsyncram ram (
     .rden_b(1'b1)
 );
 defparam
-    ram.numwords_a = 128,
-    ram.widthad_a = 7,
+    ram.numwords_a = 256,
+    ram.widthad_a = 8,
     ram.width_a = 64,
-    ram.numwords_b = 128,
-    ram.widthad_b = 7,
+    ram.numwords_b = 256,
+    ram.widthad_b = 8,
     ram.width_b = 64,
     ram.address_reg_b = "CLOCK1",
     ram.clock_enable_input_a = "BYPASS",
@@ -608,14 +603,14 @@ defparam
     ram.read_during_write_mode_mixed_ports = "DONT_CARE",
     ram.width_byteena_a = 1;
 `else
-reg [63:0] mem [0:127];
+reg [63:0] mem [0:255];
 reg [63:0] rd_q_r;
 assign rd_q = rd_q_r;
 
 integer __line_init;
 initial begin
     rd_q_r = 64'd0;
-    for (__line_init = 0; __line_init < 128; __line_init = __line_init + 1)
+    for (__line_init = 0; __line_init < 256; __line_init = __line_init + 1)
         mem[__line_init] = 64'd0;
 end
 

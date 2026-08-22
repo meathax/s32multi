@@ -14,7 +14,8 @@ Commercial ROMs are not included. Multi 32 and AS-1 hardware are not supported.
 - Optional CRT 25%, 50%, and 75% scandoubler effects
 - CRT horizontal size/position and vertical-shift controls for 15 kHz output
 - Persistent 128-byte 93C46 high-score/settings storage
-- Service mode and reset
+- Service mode and reset, with independent Test/Service controls for each
+  Multi 32 screen
 - Per-game remappable controls defined by each MRA
 - Alien3: The Gun and Jurassic Park positional-gun inputs through the generic
   MiSTer/JTFRAME-compatible analog, USB-relative-mouse, and d-pad paths;
@@ -121,7 +122,6 @@ components retain their own terms and notices:
 - JT12: GPLv3 ([LICENSE](rtl/audio/jt12/LICENSE))
 - JT8255 conformance reference: MIT ([LICENSE](verif/donors/LICENSE.jt8255))
 - T80: BSD-style terms in [`rtl/audio/T80/`](rtl/audio/T80/)
-- CRT Adjust: GPLv3 or later; provenance in [`verif/donors/README.md`](verif/donors/README.md)
 - JTFRAME/jlrh lightgun references: GPL-3.0-or-later upstream projects;
   only interface semantics were adapted into the project-owned
   [`s32_lightgun.sv`](rtl/io/s32_lightgun.sv) and

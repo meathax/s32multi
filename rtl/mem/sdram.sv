@@ -111,6 +111,7 @@ assign SDRAM_DQ = dq_oe ? dq_out : 16'hZZZZ;
 
 // init sequencer
 reg [15:0] init_cnt = 16'hffff;
+reg        init_mrs_pending;
 
 // refresh: 8192 rows / 64 ms @96.6MHz -> every ~755 cycles
 reg [9:0]  ref_cnt;
@@ -336,6 +337,7 @@ always @(posedge clk) begin
         open_bank <= 2'b00;
         open_row <= 13'd0;
         reuse_open_write_row <= 1'b0;
+        init_mrs_pending <= 1'b0;
         pre_cnt <= 2'd0;
         dqm      <= 2'b11;
         cl_pipe  <= 4'b0000;
@@ -346,16 +348,23 @@ always @(posedge clk) begin
     else if (!ready) begin
         init_cnt <= init_cnt - 1'd1;
         dqm      <= 2'b11;
+        // Predecode MRS one cycle early so the wide init counter equality
+        // does not sit directly in the SDRAM address output cone.  The
+        // pending event is consumed at 00a0, preserving the original JEDEC
+        // command/address cycle.
+        if (init_cnt == 16'h00a1)
+            init_mrs_pending <= 1'b1;
+        else if (init_mrs_pending) begin
+            cmd      <= CMD_MRS;
+            SDRAM_BA <= 2'b00;
+            SDRAM_A  <= 13'b000_0_00_010_0_000; // CL2, sequential, burst 1
+            init_mrs_pending <= 1'b0;
+        end
         // init: wait >100us, PRE-all, 8x REF, MRS (JEDEC)
         case (init_cnt)
             16'h0400: begin cmd <= CMD_PRE; SDRAM_A[10] <= 1'b1; end
             16'h03c0, 16'h0380, 16'h0340, 16'h0300,
             16'h02c0, 16'h0280, 16'h0240, 16'h0200: cmd <= CMD_REF;
-            16'h00a0: begin
-                cmd      <= CMD_MRS;
-                SDRAM_BA <= 2'b00;
-                SDRAM_A  <= 13'b000_0_00_010_0_000; // CL2, sequential, burst 1
-            end
             16'h0001: ready <= 1'b1;
             default: ;
         endcase

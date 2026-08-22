@@ -215,9 +215,8 @@ wire       cfg_multi32           = 1'b1;
 wire       cfg_has_adc           = 1'b1;
 wire       cfg_has_ppi           = 1'b0;
 wire       cfg_has_motor_hle     = 1'b0;
-wire       cfg_comm_link_hle     = board.comm_link_hle;
-wire       cfg_sprite_bank_valid = board.sprite_bank_valid;
-wire [1:0] cfg_sprite_bank_mask  = board.sprite_bank_mask;
+wire       cfg_sprite_bank_valid = 1'b1;
+wire [1:0] cfg_sprite_bank_mask  = 2'b11;
 wire       cfg_flip_y            = 1'b0;
 // A System32-only bitstream must not enter a Multi 32 runtime configuration if
 // it is accidentally paired with a Multi 32 MRA.  The universal source build
@@ -479,6 +478,7 @@ reg [15:0] tm_pages [0:7];
 reg [15:0] tm_zoomx [0:1], tm_zoomy [0:1];
 reg [15:0] tm_clips [0:19];
 reg [15:0] tm_clips_cdc [0:19];
+reg [15:0] tm_r1ff5c_cdc;
 // The tile renderer snapshots controls for the line in the opposite parity
 // bank.  The mixer must use the matching snapshot for the line currently
 // being scanned; using tilemap.layer_off directly lets a mid-frame register
@@ -494,7 +494,7 @@ initial begin
     tm_ext_tilebank = 8'b0;
     tm_r1ff00 = 16'h8000;
     tm_r1ff02 = 0; tm_r1ff04 = 0; tm_r1ff06 = 0;
-    tm_r1ff5c = 0; tm_r1ff5e = 0;
+    tm_r1ff5c = 0; tm_r1ff5c_cdc = 0; tm_r1ff5e = 0;
     mix_bg_ctrl = 0;
     tm_r1ff88 = 0; tm_r1ff8a = 0; tm_r1ff8c = 0; tm_r1ff8e = 0;
     for (tm_init_i = 0; tm_init_i < 4; tm_init_i = tm_init_i + 1) begin
@@ -524,6 +524,7 @@ always @(negedge clk_ram) begin
     // a reset mux only creates a long status[0] -> inverted-clk_ram half-cycle
     // path across all 329 bits.
     mix_disp_x_cdc <= hcnt;
+    tm_r1ff5c_cdc <= r1ff5c;
     for (tm_cdc_i = 0; tm_cdc_i < 20; tm_cdc_i = tm_cdc_i + 1)
         tm_clips_cdc[tm_cdc_i] <= w_clips[tm_cdc_i];
 end
@@ -571,7 +572,7 @@ always @(posedge clk_ram) begin
         tm_ext_tilebank <= io0_ph;
         tm_r1ff00 <= r1ff00; tm_r1ff02 <= r1ff02;
         tm_r1ff04 <= r1ff04; tm_r1ff06 <= r1ff06;
-        tm_r1ff5c <= r1ff5c; tm_r1ff5e <= r1ff5e;
+        tm_r1ff5c <= tm_r1ff5c_cdc; tm_r1ff5e <= r1ff5e;
         tm_r1ff88 <= r1ff88; tm_r1ff8a <= r1ff8a;
         tm_r1ff8c <= r1ff8c; tm_r1ff8e <= r1ff8e;
         if (tm_lb_bank)
@@ -713,24 +714,22 @@ wire [7:0] fb_next_y = (vcnt == 9'd261) ? (cfg_flip_y ? 8'd223 : 8'd0) :
 // command flips both monitors together). Declared before first use: ModelSim
 // vlog rejects a forward reference to a net inside a procedural block.
 //
-// The flip bit must be the COMPLETED buffer, never the render target.
-// s32_sprite.sv renders into fb_wr_buf = {d_mon, ~disp_buf[0]} (live value
-// after R_SWAP toggles disp_buf ~50us into the field), so reading
-// ~disp_buf[0] here tracked the in-flight erase+render pass: the beam chased
-// the top-down eraser down the displayed buffer every field, leaving a
-// horizontal band of missing sprites between the eraser and the serialized
-// renderer (title-logo/billboard tops cut, band across gameplay).
-// Instead sample disp_buf[0] once per field at vblank start: at that instant
-// it names the buffer whose pass last completed (R_SWAP only executes after
-// the previous pass reached R_DONE, so a mid-render overrun simply holds the
-// same completed frame for another field). disp_buf is written on clk_sys at
-// R_SWAP, mid-field; vbl_start (line 224) is millisecons away from that
-// write, so this single-bit clk_ram sample is race-free by timing.
-reg spr_scan_front_q;
-initial spr_scan_front_q = 1'b0;
-always @(posedge clk_ram) if (vbl_start) spr_scan_front_q <= disp_buf[0];
-wire [1:0] spr_scan_buf_a = {1'b0, spr_scan_front_q};
-wire [1:0] spr_scan_buf_b = {1'b1, spr_scan_front_q};
+// R_SWAP publishes scan_buf only after the prior hidden pass has completed.
+// Both monitors share its A/B selector; bit 1 selects the physical monitor.
+wire [1:0] spr_scan_buf_a = {1'b0, spr_scan_buf[0]};
+wire [1:0] spr_scan_buf_b = {1'b1, spr_scan_buf[0]};
+
+`ifdef SIMULATION
+always @(posedge clk_ram) begin
+    if (!rst && is_multi32) begin
+        if (fb_er_req && (fb_er_buf[0] == spr_scan_buf[0]))
+            $fatal(1, "Multi32 sprite erase aliased displayed bank");
+        if ((fb_wr_start || fb_wr_valid) &&
+            (fb_wr_buf[0] == spr_scan_buf[0]))
+            $fatal(1, "Multi32 sprite write aliased displayed bank");
+    end
+end
+`endif
 always @(posedge clk_ram) begin
     if (rst) begin
         fb_rd_req_r <= 1'b0;
@@ -962,8 +961,9 @@ assign sdr_wave_wr_be   = wave_wr_addr_i[0] ? 2'b10 : 2'b01;
 // this window behaves as byte-wide RAM even with no link partner: a game that
 // writes then reads the share area must read its own data back, not open bus.
 // Only D[7:0] is mapped (MAME maps 0x800000-0x800fff share_r/w with
-// umask16 0x00ff); the cn/fg link registers at 0x801000/2 use the small HLE
-// below, and the rest of the 0x80xxxx page reads link-not-connected (0xFFFF).
+// umask16 0x00ff); the cn/fg link registers at 0x801000/2 retain their
+// disconnected-link status semantics, and the rest of the 0x80xxxx page
+// reads link-not-connected (0xFFFF).
 // ---------------------------------------------------------------------------
 wire       sel_comm_ram = sel_comm && (A[15:12] == 4'h0);
 `ifdef S32_UNIVERSAL_DISABLED
@@ -975,8 +975,6 @@ reg [7:0]  comm_ram [0:2047];
 reg [7:0]  comm_q;
 reg        comm_cn;
 reg        comm_fg;
-reg [15:0] comm_link_timer;
-reg        comm_link_status;
 integer    comm_init_i;
 initial begin
     // Power-up default only (not a per-cycle synchronous reset -- comm_ram
@@ -987,37 +985,10 @@ initial begin
         comm_ram[comm_init_i] = 8'h00;
 end
 
-// Inference note: the previous version additionally scattered comm_ram
-// writes across five separate call sites, including three simultaneous
-// writes (bytes 0/1/4) in one cycle when the EPR-14084 link-status timer
-// expires. Quartus 17 never classified comm_ram as a RAM candidate under
-// that shape (no diagnostic at all -- same silent-failure class documented
-// for rtl/prot/s32_prot.sv). Below, comm_ram gets exactly one write
-// (address/data selected combinationally by priority) and one
-// unconditional registered read; the three-way "link established" publish
-// is spread across three consecutive clk_sys cycles by comm_pub_seq instead
-// of landing in one cycle -- invisible to the game, which only polls
-// comm_link_status (set after the sequence completes) and never has any
-// protocol reason to read bytes 0/1/4 mid-sequence. Everything else
-// (comm_cn/comm_fg/timer/status) is unchanged, in its own block, and never
-// touches comm_ram.
-reg [1:0]  comm_pub_seq;   // 0=idle, 1..3=publishing bytes 0,1,4 in order
-wire       comm_pub_start = cfg_comm_link_hle && comm_cn && !comm_link_status &&
-                             vbl_start && (comm_link_timer <= 16'd1) &&
-                             (comm_pub_seq == 2'd0);
 wire       comm_cpu_we    = m_req && m_we && sel_comm_ram && m_be[0];
-wire       comm_cn_clr_we = m_req && m_we && sel_comm_cn && m_be[0] &&
-                             cfg_comm_link_hle;   // both cn=0 and cn=1 clear byte 4 to 0x00
-wire       comm_ram_we    = comm_cpu_we || comm_cn_clr_we || (comm_pub_seq != 2'd0);
-wire [10:0] comm_ram_waddr = comm_cpu_we    ? A[11:1] :
-                              comm_cn_clr_we ? 11'd4 :
-                              (comm_pub_seq == 2'd1) ? 11'd0 :
-                              (comm_pub_seq == 2'd2) ? 11'd1 : 11'd4;
-wire [7:0]  comm_ram_wdata = comm_cpu_we ? m_wdata[7:0] :
-                              comm_cn_clr_we ? 8'h00 : 8'h01;
 
 always @(posedge clk_sys) begin
-    if (comm_ram_we) comm_ram[comm_ram_waddr] <= comm_ram_wdata;
+    if (comm_cpu_we) comm_ram[A[11:1]] <= m_wdata[7:0];
     comm_q <= comm_ram[A[11:1]];
 end
 
@@ -1025,40 +996,15 @@ always @(posedge clk_sys) begin
     if (rst) begin
         comm_cn <= 1'b0;
         comm_fg <= 1'b0;
-        comm_link_timer <= 16'h0000;
-        comm_link_status <= 1'b0;
-        comm_pub_seq <= 2'd0;
     end
     else begin
-        if (comm_pub_seq != 2'd0) begin
-            if (comm_pub_seq == 2'd3) begin
-                comm_pub_seq <= 2'd0;
-                comm_link_status <= 1'b1;
-            end
-            else comm_pub_seq <= comm_pub_seq + 2'd1;
-        end
-        else if (comm_pub_start) comm_pub_seq <= 2'd1;
-
         if (m_req && m_we && sel_comm_cn && m_be[0]) begin
             comm_cn <= m_wdata[0];
             // MAME's s32comm cn_w(0) invokes device_reset(), clearing FG too.
-            if (!m_wdata[0]) begin
-                comm_fg <= 1'b0;
-                comm_link_timer <= 16'h0000;
-                comm_link_status <= 1'b0;
-            end
-            else if (cfg_comm_link_hle) begin
-                // MAME's EPR-14084 simulation starts with an offline link and
-                // performs the master handshake over 0xe8 VBLANK ticks.
-                comm_link_timer <= 16'h00e8;
-                comm_link_status <= 1'b0;
-            end
+            if (!m_wdata[0]) comm_fg <= 1'b0;
         end
         if (m_req && m_we && sel_comm_fg && m_be[0] && comm_cn)
             comm_fg <= m_wdata[0];
-        if (cfg_comm_link_hle && comm_cn && !comm_link_status && vbl_start &&
-            comm_link_timer > 16'd1)
-            comm_link_timer <= comm_link_timer - 16'd1;
     end
 end
 `endif
@@ -1395,8 +1341,8 @@ always @(posedge clk_sys) begin
                 // IO-7: share RAM reads its own byte back (D[15:8] open bus).
                 // MAME s32comm returns 0xFE | CN for CN and 0xFE | FG for FG
                 // with the unconnected ZFG held low; only the rest of 0x80xxxx
-                // remains open bus.  The descriptor-selected EPR-14084 HLE
-                // publishes shared byte 4 after the MAME link timer expires.
+                // remains open bus. No link-partner timer or publication HLE
+                // is present in the OutRunners image.
                 sel_comm:    begin
                                 if (sel_comm_ram)
                                     rmux <= {8'hff, comm_q};
