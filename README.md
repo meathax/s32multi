@@ -17,6 +17,8 @@ Commercial ROMs are not included. Multi 32 and AS-1 hardware are not supported.
 - Service mode and reset, with independent Test/Service controls for each
   Multi 32 screen
 - Per-game remappable controls defined by each MRA
+- Independent P1/P2 steering from analog wheels/sticks, absolute paddle
+  devices, or relative spinners, including reversible spinner direction
 - Alien3: The Gun and Jurassic Park positional-gun inputs through the generic
   MiSTer/JTFRAME-compatible analog, USB-relative-mouse, and d-pad paths;
   Jurassic Park additionally supports GunCon 2 over SNAC
@@ -75,7 +77,7 @@ framebuffer/HUD blending workaround.
 | Sega 315-5388 / 315-5242 video | Palette, priority, RGB | [`s32_mixer.sv`](rtl/video/s32_mixer.sv); schematic and silicon evidence |
 | Sega 315-5296 I/O | JAMMA, DIP, service, coin | [`s32_io.sv`](rtl/io/s32_io.sv); schematic sheet 6 |
 | BR93C46 EEPROM | Serial NVRAM | `s32_io.sv`; MiSTer NVRAM upload/download |
-| MSM6253 ADC / 8255 PPI | Driving and parallel I/O, including Burning Rival's two-player six-button map | Descriptor-selected interfaces in `s32_io.sv`, `Arcade-SegaSystem32.sv`, and `s32_prot.sv` |
+| MSM6253 ADC / 8255 PPI | Driving and parallel I/O, including dual analog-wheel, paddle, and spinner steering | Descriptor-selected interfaces in `s32_io.sv`, `s32_driving_controls.sv`, and `Arcade-SegaSystem32Multi.sv` |
 | Generic MiSTer/JTFRAME positional-gun input | Signed analog reports, PS/2 mouse packets, d-pad events, native raster overlay | [`s32_lightgun.sv`](rtl/io/s32_lightgun.sv) and [`s32_lightgun_overlay.sv`](rtl/video/s32_lightgun_overlay.sv); descriptor-selected ADC channels and core-side Sinden border/crosshair controls |
 | Jurassic Park GunCon 2 | SNAC serial pins, normalized optical coordinates and buttons | [`s32_guncon_snac.sv`](rtl/io/s32_guncon_snac.sv); descriptor-gated Jurassic-only override |
 | NEC V25 protection | Program/cache and mailbox RAM | [`s32_v25_cpu.sv`](rtl/cpu/v25/s32_v25_cpu.sv); [s80x86 provenance](rtl/cpu/v25/s80x86/README.system32.md) |

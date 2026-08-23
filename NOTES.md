@@ -410,3 +410,70 @@ clean MAME frame-300 captures were byte-identical (trace SHA-256
 Completion: the seven-failure framebuffer blocker was a bench artifact and is closed. The packed
 line-RAM RTL was not changed. Hardware confirmation of the separate forced-416 visual correction
 still requires a fresh timing-clean RBF and MiSTer recording; no RBF was built in this iteration.
+
+## Iteration 2026-08-23 — OutRunners MultiPCM output scale
+
+Observation: **KNOWN** — two clean MAME 0.289 gameplay captures with sustained accelerator input
+were deterministic, and raw MultiPCM slot 29 carried the engine sample, pitch, TL and LFO writes.
+A focused headless Verilator replay measured the engine boundary at reference peak 4843 versus RTL
+peak 1210, an exact 4:1 mismatch.
+
+Evidence: MAME `gew.cpp` applies the Q12 envelope with `>>10` and then a pan/level table containing
+`/4`, so those factors cancel before its final clamp. The RTL applied its normalized envelope and
+also shifted the completed accumulator by two, retaining an extra quarter-scale attenuation. The
+MAME System 32 route gains (MultiPCM 0.35, YM 0.15) already match `s32_audio_mix.sv` and were not
+changed. The conclusion is **KNOWN** relative to the pinned MAME digital sound contract and
+**INFERRED** relative to unmeasured PCB analog output.
+
+Smallest change: remove only the final `>>>2` from both `s32_multipcm` output clamps. No register,
+voice, route, FM/skid, clock, reset, CDC, memory, state or latency behavior changed. The focused
+regression replays the captured engine slot/sample/TL/pitch/LFO shape and requires the emitted peak
+to equal the pre-clamp reference accumulator.
+
+Known unknown: PCB analog gain still requires hardware listening. No RBF was built in this
+iteration.
+
+Verification: strict headless Verilator 5.050 (`--threads 1`, assertions, timing and
+`--sched-zero-delay`) reproduced the pre-fix boundary twice at 4843/1210 and the rebuilt result
+twice at 4843/4843. Comparator receipt `artifacts/diff/orunners-engine/comparator-before.json`
+records the old event-0 divergence; `comparator-after.json` is an admissible MATCH with prefix 1.
+Focused MultiPCM, engine voice at ACK 30/100, cadence at 28/8 voices, audio-mixer differential,
+sound-bus and both ZROM-cache configurations pass. The broad regression passed through its cold
+boots, 50-seed V60 differential, soak, framebuffer, mixer, sprite and CPU tiers, then stopped at a
+pre-existing six-assertion V25/MCU ROM-loader mapping failure. The Python suite likewise retains
+12 pre-existing QSF/profile-contract failures in the dirty working tree; the three named release
+check scripts from the project contract are absent. These unrelated blockers were not modified.
+
+## Iteration 2026-08-23 — MultiPCM pan law and RBF build
+
+Observation: **KNOWN** — the engine level correction closed the 4:1 output-scale mismatch, but
+non-center pan codes still used binary RTL shifts instead of the MAME attenuation curve.
+
+Evidence: pinned MAME 0.289 `src/mame/sega/segas32/gew.cpp` computes pan as `pan * (-12 dB) / 4`;
+its fixed-point conversion truncates to Q10 gains `1024, 724, 513, 363, 257, 182, 128, 0` for
+distances 0..7. The RTL previously used `>>>1/2/3` approximations. This is **KNOWN** for the
+pinned digital MAME contract and **INFERRED** for the unmeasured PCB analog path.
+
+Smallest change: replace only the `s32_multipcm` pan attenuation shifts with a Q10 lookup and
+signed multiply. Center pan remains full stereo and pan 8 remains muted; codes 1..7 and 9..15
+now use the exact MAME gains. No voice envelope, sample fetch, route, FM/YM, skid, clock, reset,
+CDC, state or latency behavior changed.
+
+Verification: strict headless Verilator 5.050 (`--threads 1`, assertions, timing,
+`--sched-zero-delay`) and Icarus exhaustively passed 32 pan cases (positive/negative samples,
+both channels). The corrected engine boundary still passes twice at reference/RTL peak 4843/4843.
+Existing MultiPCM, mixer, sound-bus, ZROM-cache and cadence tests pass.
+
+RBF build: Quartus Prime 17.0.2 Build 602, project/revision `Arcade-SegaSystem32Multi`, top
+`sys_top`, device `5CSEBA6U23I7`, seed 4. The clean full compile, fit and assembler completed
+and produced `output_files/Arcade-SegaSystem32Multi.rbf` (4,593,448 bytes, SHA-256
+`49597E7B6BD4EE06BF727511557DDB263EE349A2A466A8A68604D366DD54E77E`). STA is not
+acceptance-clean: seed 4 has setup WNS -0.195 ns (hold +0.247 ns). Bounded seed experiments
+were recorded: seed 3 worsened setup to -0.364 ns; seed 2 improved setup to +0.258 ns but
+introduced hold -0.463 ns. Seed 4 is restored in the QSF and the fresh seed-4 RBF is preserved;
+no clock, SDC, false-path, or unrelated video workaround was applied. The RBF was not promoted
+over the existing dated release because the hard timing gate remains open.
+
+Known unknowns: PCB analog level and real MiSTer audio still require hardware listening; no
+hardware load was performed. The next timing action is a causal ascal/HDMI congestion repair,
+not an audio change.

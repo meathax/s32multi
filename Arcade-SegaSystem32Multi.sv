@@ -119,6 +119,10 @@ wire [15:0] joystick_l_analog_0;
 wire [15:0] joystick_l_analog_1;
 wire [15:0] joystick_r_analog_0;
 wire [15:0] joystick_r_analog_1;
+wire  [7:0] paddle_0;
+wire  [7:0] paddle_1;
+wire  [8:0] spinner_0;
+wire  [8:0] spinner_1;
 wire        core_hs, core_vs;
 wire        mode_416_active;
 wire [24:0] ps2_mouse;
@@ -168,6 +172,9 @@ localparam CONF_STR = {
     "O[6],Screen (Multi32),A,B;",
     "O[38],Splitscreen,Off,On;",
     "O[7],Service Mode,Off,On;",
+    "-;",
+    "O[40:39],P1 Steering,Analog Wheel,Paddle,Spinner,Spinner Reverse;",
+    "O[42:41],P2 Steering,Analog Wheel,Paddle,Spinner,Spinner Reverse;",
     // status[8], status[30:34], status[36:37] were the lightgun/GunCon SNAC
     // options (Sinden Borders, Gun Crosshair, Gun Sensitivity, P1/P2 Gun
     // Input) -- OutRunners has no positional-gun cabinet. Left unallocated
@@ -339,8 +346,10 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io (
     .joystick_l_analog_2(),
     .joystick_r_analog_0(joystick_r_analog_0),
     .joystick_r_analog_1(joystick_r_analog_1),
-    .paddle_0(),
-    .paddle_1(),
+    .paddle_0(paddle_0),
+    .paddle_1(paddle_1),
+    .spinner_0(spinner_0),
+    .spinner_1(spinner_1),
     .ps2_mouse(ps2_mouse)
 );
 
@@ -505,6 +514,9 @@ s32_driving_controls driving_controls (
     .capture_wheel(1'b0),
     .wheel_sample(1'b0),
     .left_x(joystick_l_analog_0[7:0]),
+    .paddle(paddle_0),
+    .spinner(spinner_0),
+    .wheel_source(status[40:39]),
     .right_y(joystick_r_analog_0[15:8]),
     // Dedicated assignable Accelerate/Brake buttons (MRA buttons 6/7,
     // joystick bits 9/10). These used to alias Shift Up/Down (bits 4/5),
@@ -533,6 +545,9 @@ s32_driving_controls driving_controls_p2 (
     .capture_wheel(1'b0),
     .wheel_sample(1'b0),
     .left_x(joystick_l_analog_1[7:0]),
+    .paddle(paddle_1),
+    .spinner(spinner_1),
+    .wheel_source(status[42:41]),
     .right_y(joystick_r_analog_1[15:8]),
     .digital_accel(joystick_1[9]),
     .digital_brake(joystick_1[10]),
@@ -543,10 +558,9 @@ s32_driving_controls driving_controls_p2 (
     .brake(driving_brake_p2)
 );
 // Driving cabinets wire the wheel, accelerator, and brake to the MSM6253
-// channels. MiSTer's left-stick X is the wheel; right-stick up/down are the
-// analog pedals, with A/B as full-scale digital fallbacks. The wheel follows
-// the current deadzoned stick coordinate directly; retaining an IIR history
-// here made continuous sweeps pause at stale intermediate positions.
+// channels. Each wheel can use MiSTer's analog X, absolute paddle, or relative
+// spinner interface; right-stick up/down are the analog pedals, with A/B as
+// full-scale digital fallbacks. The default analog path remains direct.
 // Channel layout matches MAME's fixed ANALOG1/2 + banked ANALOG3/4 (bank 0)
 // and ANALOG7/8 (bank 1) -- see the s32_msm6253 instantiation comment.
 assign adc_ch[0] = driving_wheel;      // ANALOG1: P1 wheel (fixed)

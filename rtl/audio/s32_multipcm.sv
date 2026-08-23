@@ -518,6 +518,32 @@ begin
 end
 endfunction
 
+function automatic [10:0] pan_gain(input [2:0] distance);
+begin
+    case (distance)
+        3'd0: pan_gain = 11'd1024;
+        3'd1: pan_gain = 11'd724;
+        3'd2: pan_gain = 11'd513;
+        3'd3: pan_gain = 11'd363;
+        3'd4: pan_gain = 11'd257;
+        3'd5: pan_gain = 11'd182;
+        3'd6: pan_gain = 11'd128;
+        default: pan_gain = 11'd0;
+    endcase
+end
+endfunction
+
+function automatic signed [15:0] pan_attenuate(
+    input signed [15:0] sample,
+    input [2:0] distance
+);
+    reg signed [26:0] product;
+begin
+    product = sample * $signed({1'b0, pan_gain(distance)});
+    pan_attenuate = product >>> 10;
+end
+endfunction
+
 function automatic signed [15:0] pan_sample(
     input signed [15:0] sample,
     input [3:0] pan,
@@ -532,17 +558,16 @@ begin
         pan_sample = sample;
     end
     else if (!pan[3]) begin
-        // 1..7 attenuate left; 7 is hard-left mute.
+        // 1..7 attenuate left; 7 is hard-left mute. MAME uses a 3 dB
+        // exponential step, represented here as the exact Q10 table.
         if (!is_left) pan_sample = sample;
-        else if (pan == 4'h7) pan_sample = 16'sd0;
-        else pan_sample = sample >>> ((pan + 1'b1) >> 1);
+        else pan_sample = pan_attenuate(sample, pan[2:0]);
     end
     else begin
         // 9..15 attenuate right using MAME's inverted distance.
         distance = 4'd0 - pan;
         if (is_left) pan_sample = sample;
-        else if (distance == 4'h7) pan_sample = 16'sd0;
-        else pan_sample = sample >>> ((distance + 1'b1) >> 1);
+        else pan_sample = pan_attenuate(sample, distance[2:0]);
     end
 end
 endfunction
@@ -798,12 +823,32 @@ always @(posedge clk) begin
         if (mac_p2_valid) begin
             reg signed [31:0] mul3;
             reg signed [15:0] attenuated;
+            reg signed [15:0] pan_attenuated;
             reg signed [15:0] panned_l;
             reg signed [15:0] panned_r;
+            reg [3:0] pan_code;
+            reg [3:0] pan_distance;
             mul3 = mac_p2_val * $signed({1'b0, s_alfo_gain[mac_p2_slot]});
             attenuated = mul3 >>> 10;
-            panned_l = pan_sample(attenuated, sreg[mac_p2_slot][0][7:4], 1'b1);
-            panned_r = pan_sample(attenuated, sreg[mac_p2_slot][0][7:4], 1'b0);
+            pan_code = sreg[mac_p2_slot][0][7:4];
+            pan_distance = pan_code[3] ? (4'd0 - pan_code) : pan_code;
+            pan_attenuated = pan_attenuate(attenuated, pan_distance[2:0]);
+            if (pan_code == 4'h8) begin
+                panned_l = 16'sd0;
+                panned_r = 16'sd0;
+            end
+            else if (pan_code == 4'h0) begin
+                panned_l = attenuated;
+                panned_r = attenuated;
+            end
+            else if (!pan_code[3]) begin
+                panned_l = pan_attenuated;
+                panned_r = attenuated;
+            end
+            else begin
+                panned_l = attenuated;
+                panned_r = pan_attenuated;
+            end
             acc_l <= acc_l + {{6{panned_l[15]}}, panned_l};
             acc_r <= acc_r + {{6{panned_r[15]}}, panned_r};
         end
@@ -827,8 +872,8 @@ always @(posedge clk) begin
                 tick <= 0;
                 if (slot == 5'd27) begin
                     slot <= 0;
-                    out_l <= clamp16(acc_l >>> 2);
-                    out_r <= clamp16(acc_r >>> 2);
+                    out_l <= clamp16(acc_l);
+                    out_r <= clamp16(acc_r);
                     acc_l <= 0;
                     acc_r <= 0;
                 end

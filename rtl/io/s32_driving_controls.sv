@@ -1,15 +1,18 @@
 // System 32 driving-cabinet input adapters.
 // MiSTer analog-stick axes are signed -128..+127 with zero at rest.
-// Steering: left-stick X, deadzoned, with dpad left/right as a full-deflection
-// digital fallback when no analog stick is present. Pedals: right-stick Y
-// split into accel(up)/brake(down), with two assignable digital buttons as
-// full-scale fallbacks.
+// Steering accepts a signed analog axis, an absolute paddle, or relative
+// spinner reports. D-pad left/right remain full-deflection fallbacks. Pedals
+// split right-stick Y into accel(up)/brake(down), with two assignable digital
+// buttons as full-scale fallbacks.
 module s32_driving_controls (
     input         clk,
     input         rst,
     input         capture_wheel,
     input         wheel_sample,
     input   [7:0] left_x,
+    input   [7:0] paddle,
+    input   [8:0] spinner,
+    input   [1:0] wheel_source,
     input   [7:0] right_y,
     input         digital_accel,
     input         digital_brake,
@@ -37,7 +40,55 @@ module s32_driving_controls (
         end
     endfunction
 
-    wire [7:0] wheel_live = wheel_deadzone(left_x);
+    reg  [7:0] spinner_position;
+    reg        spinner_toggle_d;
+
+    function automatic [7:0] spinner_step(
+        input [7:0] position,
+        input signed [8:0] delta
+    );
+        reg signed [9:0] next_position;
+        begin
+            next_position = $signed({2'b00, position}) +
+                            $signed({delta[8], delta});
+            if (next_position < 0)
+                spinner_step = 8'h00;
+            else if (next_position > 10'sd255)
+                spinner_step = 8'hff;
+            else
+                spinner_step = next_position[7:0];
+        end
+    endfunction
+
+    wire signed [8:0] spinner_delta = {spinner[7], spinner[7:0]};
+    wire signed [8:0] spinner_delta_selected =
+        (wheel_source == 2'd3) ? -spinner_delta : spinner_delta;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            spinner_position <= 8'h80;
+            spinner_toggle_d <= spinner[8];
+        end
+        else begin
+            spinner_toggle_d <= spinner[8];
+            if (spinner[8] != spinner_toggle_d) begin
+                spinner_position <= spinner_step(spinner_position,
+                                                 spinner_delta_selected);
+            end
+        end
+    end
+
+    reg [7:0] wheel_source_value;
+    always @(*) begin
+        case (wheel_source)
+            2'd1: wheel_source_value = paddle;
+            2'd2,
+            2'd3: wheel_source_value = spinner_position;
+            default: wheel_source_value = wheel_deadzone(left_x);
+        endcase
+    end
+
+    wire [7:0] wheel_live = wheel_source_value;
 
     function automatic [8:0] wheel_distance(
         input [7:0] a,
