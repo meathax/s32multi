@@ -278,7 +278,7 @@ set_global_assignment -name ALM_REGISTER_PACKING_EFFORT MEDIUM
 # seed 2, the smallest violation found: single ascal miss, -0.144 ns.
 # Trying PHYSICAL_SYNTHESIS_REGISTER_DUPLICATION ON next (still OFF below,
 # line ~63) as the non-seed lever before considering a reviewed exception.
-set_global_assignment -name SEED 4
+set_global_assignment -name SEED 2
 # 2026-08-13: dropped from 8 to 2.  At 8, quartus_map and quartus_fit both died
 # with `*** Fatal Error: Access Violation` on this host; the fitter's stack
 # trace named deeply recursive TIS_ADVANCED_SPICE_RC_BODY::annotate_delay_tree
