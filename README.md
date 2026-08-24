@@ -49,8 +49,7 @@ Commercial ROMs are not included.
 This table lists only shared custom-chip roles supported by the available
 schematic or silicon evidence. It is not a blanket board-level or
 cycle-accuracy claim for every supported title. Open timing, analogue, PLD,
-protection, and link-board questions are tracked in the [PCB evidence
-ledger](docs/pcb/system32_evidence.json).
+protection, and link-board questions remain outside this release's verified scope.
 
 | Area | Evidence | Core implementation |
 | --- | --- | --- |
@@ -59,8 +58,6 @@ ledger](docs/pcb/system32_evidence.json).
 | Colour/video output | Sega schematics, sheet 5; [315-5242 silicon evidence](https://github.com/furrtek/SiliconRE/tree/master/Sega/315-5242) | Palette, priority, shadow/highlight, and RGB output in [`s32_mixer.sv`](rtl/video/s32_mixer.sv) and [`s32_palette.sv`](rtl/video/s32_palette.sv) |
 | I/O and EEPROM | Sega schematics, sheet 6 | 315-5296 I/O and BR93C46 serial storage in [`s32_io.sv`](rtl/io/s32_io.sv) |
 
-See [hardware references](docs/references.md) for the schematic provenance and
-detailed source record.
 
 ## Supported games
 
@@ -79,8 +76,7 @@ variant uses the same production RBF and its curated MRA descriptor:
 - **Stadium Cross (US):** MAME set `scrossu`, parent `scross`
 
 The linkable Stadium Cross clone (`scrossa`) and all other System 32, Multi 32,
-or AS-1 sets are intentionally not emitted by `tools/gen_mra.py` or supported
-by this production profile.
+or AS-1 sets are not distributed or supported by this production profile.
 
 ## **Hardware emulated**
 
@@ -103,7 +99,7 @@ by this production profile.
 - **Meathax** - System Multi 32 RTL, descriptor routing, MRA generation,
   verification, and packaging for the supported Multi 32 titles.
 - **Sega, Nemesis1207, and System 32 researchers** - original hardware and
-  public schematic material recorded in [the source ledger](docs/references.md).
+  public schematic material.
 - **MAME developers** - [System 32/Multi 32 behavioural reference](https://github.com/mamedev/mame).
 - **Jose Tejada Gomez / Jotego** - [JT12](https://github.com/jotego/jt12)
   and audited [JTCORES](https://github.com/jotego/jtcores/tree/c990f843c7bd8eaf26179a0632bac1436cc05b52)
@@ -114,7 +110,7 @@ by this production profile.
 - **Umberto Parisi (rmonic79) and Andrea Bogazzi (@asturur)** -
   [MiSTer-CRT-Adjust](https://github.com/rmonic79/MiSTer-CRT-Adjust/tree/c682de9f4acc61d8f4c7779efb48149d3baa3a8e).
 - **MiSTer-devel and reference-core authors** - MiSTer framework, MRA tooling,
-  and the integration references listed in [reference-cores.md](docs/reference-cores.md).
+  and integration references.
 - Intel Quartus, Verilator, Icarus Verilog, ModelSim, and MAME tool authors.
 
 ## License
@@ -124,7 +120,7 @@ components retain their own terms and notices:
 
 - JT12: GPLv3 ([LICENSE](rtl/audio/jt12/LICENSE))
 - T80: BSD-style terms in [`rtl/audio/T80/`](rtl/audio/T80/)
-- SiliconRE material: [SiliconRE licence](docs/references/siliconre/315-5385/SiliconRE-LICENSE)
+- SiliconRE material retains its original licence terms
 - MiSTer framework and Intel/Altera IP: retained upstream/vendor notices
 
 Linked reference projects and arcade ROMs remain under their respective terms.
@@ -145,7 +141,6 @@ db_url = https://raw.githubusercontent.com/meathax/meatcores/db/downloader_meath
 
 ## Development
 
-Quartus Prime 17.0.2 Build 602 is the pinned toolchain. Build the universal
-Multi 32 production profile with `tools/build-segas32.bat`. See
-[PROFILE_CONTRACT.md](PROFILE_CONTRACT.md) for profile rules and verification
-commands.
+Quartus Prime 17.0.2 Build 602 is the pinned toolchain. Open
+`Arcade-SegaSystem32Multi.qpf` and compile the
+`Arcade-SegaSystem32Multi` revision.
