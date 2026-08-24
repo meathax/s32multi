@@ -5,7 +5,7 @@
   <manufacturer>Sega</manufacturer>
   <rbf>Arcade-SegaSystem32Multi</rbf>
   <joystick>Dual analog sticks (left hand / right hand)</joystick>
-  <buttons names="Right Stick Left,Right Stick Right,Right Stick Up,Right Stick Down,Start,Coin,Test,Service" default="A,B,X,Y,Start,Select,L" count="4"/>
+  <buttons names="Right Stick Left,Right Stick Right,Right Stick Up,Right Stick Down,-,-,-,Start,Coin,Test,Service" default="A,B,X,Y,Start,Select,R,L" count="4"/>
   <rom index="4" zip="titlef.zip" md5="none">
     <interleave output="32">
       <part name="epr-15388.ic37" crc="db1eefbd" map="0021"/>

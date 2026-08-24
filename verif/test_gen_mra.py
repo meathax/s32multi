@@ -28,7 +28,7 @@ class ButtonMetadataTests(unittest.TestCase):
                           "Coin", "Test", "Service"])
         self.assertEqual(defaults.split(","),
                          ["A", "B", "X", "Y", "R", "-", "-", "Start",
-                          "Select", "L"])
+                          "Select", "R", "L"])
 
 
 class EepromArchiveSourceTests(unittest.TestCase):
@@ -164,7 +164,7 @@ class RegenerationFidelityTests(unittest.TestCase):
                  check=True, capture_output=True)
             generated = sorted(Path(tmp).glob("*.mra"))
             mra_dir = repo / "releases"
-            tracked = sorted(mra_dir.glob("*.mra"), key=lambda path: path.name)
+            tracked = sorted(mra_dir.rglob("*.mra"), key=lambda path: path.name)
             self.assertEqual([p.name for p in generated],
                              [p.name for p in tracked],
                              str(mra_dir))

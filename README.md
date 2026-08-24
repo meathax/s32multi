@@ -1,17 +1,20 @@
-# Sega System Multi 32: Multi 32 games for MiSTer FPGA
+# SEGA SYSTEM MULTI 32: Four fully supported games for MiSTer FPGA
 
-MiSTer FPGA core for Sega's System Multi 32 board family
-(837-8676 / 171-6253C). It targets the DE10-Nano with SDRAM and uses one
-descriptor-selected production image, `Arcade-SegaSystem32Multi.rbf`. The
-MRAs select the supported OutRunners, Title Fight, Hard Dunk, and Stadium Cross
-ROM sets without creating per-game Quartus images.
+MiSTer FPGA core for SEGA's System Multi 32 board family
+(837-8676 / 171-6253C). This is one universal production image for four fully
+supported games: OutRunners, Title Fight, Hard Dunk, and Stadium Cross. It
+targets the DE10-Nano with SDRAM and uses the descriptor-selected
+`Arcade-SegaSystem32Multi.rbf`; the MRAs select each supported ROM set without
+creating per-game Quartus images.
 
-This production profile contains the common dual-screen Multi 32 video path,
-two 315-5296 cockpit I/O lanes, the 837-7536 analog board, the Hard Dunk
-mode-0 8255 expansion, and the 315-5560 MultiPCM path. Stadium Cross link mode
-(`scrossa`) is intentionally not emitted; the supported Stadium Cross sets are
-the normal non-link cabinets. Other System 32, Multi 32, and AS-1 games are
-not supported. Commercial ROMs are not included.
+The universal profile contains the common dual-screen Multi 32 video path, two
+315-5296 cockpit I/O lanes, the 837-7536 analog board, the Hard Dunk mode-0
+8255 expansion, and the 315-5560 MultiPCM path. All four games have their
+cabinet-specific controls, video, audio, ROM routing, and MRA descriptors
+implemented in this profile. Stadium Cross link mode (`scrossa`) is
+intentionally not emitted; the supported Stadium Cross sets are the normal
+non-link cabinets. Other System 32, Multi 32, and AS-1 games are not exposed.
+Commercial ROMs are not included.
 
 ## Features in the OSD
 
@@ -22,15 +25,15 @@ not supported. Commercial ROMs are not included.
 - Persistent 128-byte 93C46 high-score/settings storage
 - Service mode and reset, with independent Test/Service controls for each
   cockpit
-- Descriptor-selected controls for each supported cabinet:
+- Descriptor-selected controls for each fully supported cabinet:
   - OutRunners: shift up/down, DJ/music, track previous/next, accelerator,
     brake, start, coin, test, and service
   - Title Fight: P1/P2 left-hand sticks on the left analog sticks or D-pad
     directions; right-hand sticks on the right analog sticks or named Right
     Stick Left/Right/Up/Down buttons; start, coin, test, and service
-  - Hard Dunk: six independent digital joysticks for the 3-vs-3 cabinet, each
-    with named Button 1/2/3/4 controls, plus player starts, coin, test, and
-    service
+  - Hard Dunk: six independent digital or left-analog movement controls for
+    the 3-vs-3 cabinet, with Pass / Steal and Shoot / Dunk / Block, plus player
+    starts, coin, test, and service
   - Stadium Cross: P1/P2 left-analog X steering with D-pad left/right fallback;
     right-analog Y accelerator/brake, left-analog Y handlebar pitch (up pushes
     forward, down pulls back), D-pad up/down pitch fallback, Attack, Wheelie,
@@ -61,7 +64,8 @@ detailed source record.
 
 ## Supported games
 
-All supported variants use the same production RBF:
+The following four SEGA System Multi 32 games are fully supported. Every listed
+variant uses the same production RBF and its curated MRA descriptor:
 
 - **OutRunners (World):** MAME set `orunners`
 - **OutRunners (US):** MAME set `orunnersu`, parent `orunners`

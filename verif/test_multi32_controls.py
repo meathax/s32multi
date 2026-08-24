@@ -24,7 +24,7 @@ class Multi32ControlTests(unittest.TestCase):
             TOP,
         )
         self.assertIn(
-            "Button 1,Button 2,Button 3,Button 4,Start,Coin,Test,Service",
+            "Pass / Steal,Shoot / Dunk / Block,-,-,-,-,-,Start,Coin,Test,Service",
             (ROOT / "tools/gen_mra.py").read_text(encoding="utf-8"),
         )
 
@@ -75,7 +75,7 @@ class Multi32ControlTests(unittest.TestCase):
             self.assertIn(f"j[{bit}]", TOP)
         self.assertIn(
             "Right Stick Left,Right Stick Right,Right Stick Up,Right Stick Down,"
-            "Start,Coin,Test,Service",
+            "-,-,-,Start,Coin,Test,Service",
             (ROOT / "tools/gen_mra.py").read_text(encoding="utf-8"),
         )
 
@@ -98,15 +98,15 @@ class Multi32ControlTests(unittest.TestCase):
         expected = {
             "titlef": (
                 "Right Stick Left,Right Stick Right,Right Stick Up,Right Stick Down,"
-                "Start,Coin,Test,Service",
+                "-,-,-,Start,Coin,Test,Service",
                 "4",
             ),
             "harddunk": (
-                "Button 1,Button 2,Button 3,Button 4,Start,Coin,Test,Service",
-                "4",
+                "Pass / Steal,Shoot / Dunk / Block,-,-,-,-,-,Start,Coin,Test,Service",
+                "2",
             ),
             "scross": (
-                "Attack,Wheelie,Brake,Accelerate,Handlebar Forward,Handlebar Back,Start,Coin,Test,Service",
+                "Attack,Wheelie,Brake,Accelerate,Handlebar Forward,Handlebar Back,-,Start,Coin,Test,Service",
                 "6",
             ),
         }

@@ -56,15 +56,23 @@ def _parents() -> dict:
 
 class MraDescriptorExtractionTests(unittest.TestCase):
     def test_every_mra_ships_a_64_byte_descriptor_on_index_0(self) -> None:
+        expected_profiles = {
+            "orunners": 0x00,
+            "titlef": 0x04,
+            "harddunk": 0x08,
+            "scross": 0x0C,
+        }
         mras = _parents()
         self.assertGreater(len(mras), 0, "no MRAs found")
         for setname, path in mras.items():
             with self.subTest(set=setname):
                 desc = _mra_descriptor(path)
                 self.assertEqual(len(desc), 0x40, path.name)
-                # Byte 4 carries the player-port layout; bytes 5..63 remain
-                # reserved and must stay zero.
-                self.assertEqual(desc[4] & ~0x03, 0, path.name)
+                # Byte 4 carries the digital profile in bits 1:0 and the
+                # universal Multi 32 title selector in bits 4:2.
+                self.assertIn(setname, expected_profiles, path.name)
+                self.assertEqual(desc[4], expected_profiles[setname], path.name)
+                # Bytes 5..63 remain reserved and must stay zero.
                 self.assertEqual(desc[5:], bytes(0x3B), path.name)
 
     def test_make_sim_images_reproduces_the_shipped_descriptor(self) -> None:

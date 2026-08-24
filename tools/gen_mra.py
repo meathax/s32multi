@@ -119,26 +119,26 @@ BUTTONS = {
     "orunners": (
         "Shift Up,Shift Down,DJ/Music,Music Prev,Music Next,Accelerate,Brake,"
         "Start,Coin,Test,Service",
-        "A,B,X,Y,R,-,-,Start,Select,L",
+        "A,B,X,Y,R,-,-,Start,Select,R,L",
     ),
     "titlef": (
-        "Right Stick Left,Right Stick Right,Right Stick Up,Right Stick Down,Start,Coin,Test,Service",
-        "A,B,X,Y,Start,Select,L",
+        "Right Stick Left,Right Stick Right,Right Stick Up,Right Stick Down,-,-,-,Start,Coin,Test,Service",
+        "A,B,X,Y,Start,Select,R,L",
     ),
     "harddunk": (
-        "Button 1,Button 2,Button 3,Button 4,Start,Coin,Test,Service",
-        "A,B,X,Y,Start,Select,L",
+        "Pass / Steal,Shoot / Dunk / Block,-,-,-,-,-,Start,Coin,Test,Service",
+        "A,B,Start,Select,R,L",
     ),
     "scross": (
-        "Attack,Wheelie,Brake,Accelerate,Handlebar Forward,Handlebar Back,Start,Coin,Test,Service",
-        "A,B,X,Y,L,R,Start,Select,L",
+        "Attack,Wheelie,Brake,Accelerate,Handlebar Forward,Handlebar Back,-,Start,Coin,Test,Service",
+        "A,B,X,Y,L,R,Start,Select,R,L",
     ),
 }
 
 BUTTON_COUNTS = {
     "orunners": 7,
     "titlef": 4,
-    "harddunk": 4,
+    "harddunk": 2,
     "scross": 6,
 }
 

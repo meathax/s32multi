@@ -5,7 +5,7 @@
   <manufacturer>Sega</manufacturer>
   <rbf>Arcade-SegaSystem32Multi</rbf>
   <joystick>Left-stick steering / Y-axis handlebar pitch / D-pad pitch fallback</joystick>
-  <buttons names="Attack,Wheelie,Brake,Accelerate,Handlebar Forward,Handlebar Back,Start,Coin,Test,Service" default="A,B,X,Y,L,R,Start,Select,L" count="6"/>
+  <buttons names="Attack,Wheelie,Brake,Accelerate,Handlebar Forward,Handlebar Back,-,Start,Coin,Test,Service" default="A,B,X,Y,L,R,Start,Select,R,L" count="6"/>
   <rom index="4" zip="scross.zip" md5="none">
     <interleave output="32">
       <part name="epr-15093.ic37" crc="2adc7a4b" map="0021"/>
