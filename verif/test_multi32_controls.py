@@ -13,14 +13,14 @@ class Multi32ControlTests(unittest.TestCase):
     def test_hard_dunk_routes_all_six_players(self):
         for player, joystick in enumerate(range(6), start=1):
             self.assertIn(
-                f"hard_p{player}a = p_dig4(joystick_{joystick})", TOP
+                f"hard_p{player}a = hard_dig4(joystick_{joystick}, joystick_l_analog_{joystick})", TOP
             )
         self.assertIn("wire [7:0] hard_p1b = hard_p4a;", TOP)
         self.assertIn("wire [7:0] hard_p2b = hard_p5a;", TOP)
         self.assertIn("wire [7:0] hard_ppi_pa = hard_p3a;", TOP)
         self.assertIn("wire [7:0] hard_ppi_pb = hard_p6a;", TOP)
         self.assertIn(
-            "hard_ppi_pc = ~{6'b000000, joystick_5[10], joystick_2[10]}",
+            "hard_ppi_pc = ~{6'b000000, joystick_5[11], joystick_2[11]}",
             TOP,
         )
         self.assertIn(
@@ -31,20 +31,25 @@ class Multi32ControlTests(unittest.TestCase):
     def test_stadium_cross_steering_and_handlebar_pitch(self):
         self.assertIn(".left_x(joystick_l_analog_0[7:0])", TOP)
         self.assertIn(".left_x(joystick_l_analog_1[7:0])", TOP)
+        for joystick in range(2, 6):
+            self.assertIn(f".joystick_l_analog_{joystick}(joystick_l_analog_{joystick})", TOP)
         self.assertIn(
-            "scross_p1a = scross_ctrl(joystick_0, joystick_l_analog_0[15:8])",
+            "scross_p1a = scross_ctrl(joystick_0, joystick_l_analog_0)",
             TOP,
         )
         self.assertIn(
-            "scross_p1b = scross_ctrl(joystick_1, joystick_l_analog_1[15:8])",
+            "scross_p1b = scross_ctrl(joystick_1, joystick_l_analog_1)",
             TOP,
         )
         self.assertIn(".digital_left(joystick_0[1])", TOP)
         self.assertIn(".digital_right(joystick_0[0])", TOP)
         self.assertIn(".digital_left(joystick_1[1])", TOP)
         self.assertIn(".digital_right(joystick_1[0])", TOP)
-        self.assertIn("p[3] = ~((y < -9'sd24) || j[3] || j[8])", TOP)
-        self.assertIn("p[4] = ~((y >  9'sd24) || j[2] || j[9])", TOP)
+        self.assertIn("handle_forward = (y < -9'sd24) || j[3] || j[8]", TOP)
+        self.assertIn("handle_back = (y > 9'sd24) || j[2] || j[9]", TOP)
+        self.assertIn("p[1] = (j[5] || handle_back) && !handle_forward", TOP)
+        self.assertNotIn("p[3] = ~((y < -9'sd24) || j[3] || j[8])", TOP)
+        self.assertNotIn("p[4] = ~((y >  9'sd24) || j[2] || j[9])", TOP)
         self.assertIn("? joystick_0[7]", TOP)
         self.assertIn("? 1'b0", TOP)
         self.assertIn("? joystick_1[7]", TOP)
@@ -75,15 +80,19 @@ class Multi32ControlTests(unittest.TestCase):
         )
 
     def test_service_start_coin_lanes_use_hps_io_contract(self):
-        # hps_io joystick bits are D-pad [3:0], action [9:4], Start [10],
-        # Coin [11], Test [13], Service [14].  No production service mux may
-        # consume the old off-by-one bit 12.
-        self.assertIn("joystick_1[10]", TOP)
-        self.assertIn("joystick_0[10]", TOP)
-        self.assertIn("joystick_1[11]", TOP)
-        self.assertIn("joystick_0[11]", TOP)
-        self.assertNotIn("joystick_0[12]", TOP)
-        self.assertNotIn("joystick_1[12]", TOP)
+        # hps_io joystick bits are D-pad [3:0], action [9:4], B7 [10],
+        # Start [11], Coin [12], Test [13], Service [14].
+        service_mux = TOP[TOP.index("wire [7:0] svc12 ="):TOP.index("wire [7:0] core_svc12 =")]
+        self.assertNotIn("[10]", service_mux)
+        self.assertIn("joystick_1[11]", service_mux)
+        self.assertIn("joystick_0[11]", service_mux)
+        self.assertIn("joystick_1[12]", service_mux)
+        self.assertIn("joystick_0[12]", service_mux)
+        self.assertIn(
+            "ga2_ppi_pc = ~{4'b0, joystick_0[12], joystick_1[12],",
+            TOP,
+        )
+        self.assertIn("joystick_3[11], joystick_2[11]};", TOP)
 
     def test_new_mras_have_named_controls(self):
         expected = {
