@@ -136,7 +136,7 @@ For automatic installation, add this to `/media/fat/downloader.ini` and run
 
 ```ini
 [meathax/meatcores]
-db_url = https://raw.githubusercontent.com/meathax/meatcores/db/downloader_meathax_meatcores.zip
+db_url = https://raw.githubusercontent.com/meathax/meatcores/db/db.json.zip
 ```
 
 ## Development
