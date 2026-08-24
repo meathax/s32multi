@@ -189,6 +189,7 @@ always @(posedge clk) begin
                             desc_r.dual_comm_ff      <= desc_bytes[1][6];
                             desc_r.gear_toggle       <= desc_bytes[1][7];
                             desc_r.digital_profile   <= desc_bytes[4][1:0];
+                            desc_r.game_profile      <= desc_bytes[4][4:2];
                             desc_r.comm_link_hle     <= desc_bytes[2][7];
                         end
                     end
@@ -227,6 +228,7 @@ always @(posedge clk) begin
                             desc_r.dual_comm_ff      <= desc_bytes[1][6];
                             desc_r.gear_toggle       <= desc_bytes[1][7];
                             desc_r.digital_profile   <= desc_bytes[4][1:0];
+                            desc_r.game_profile      <= desc_bytes[4][4:2];
                             desc_r.comm_link_hle     <= desc_bytes[2][7];
                         end
                     end

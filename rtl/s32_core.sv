@@ -40,8 +40,6 @@ endmodule
 `define S32_AREA_ROM_CACHE
 `elsif S32_GAME_ONLY
 `define S32_AREA_ROM_CACHE
-`elsif S32_OUTRUNNERS
-`define S32_AREA_ROM_CACHE
 `endif
 
 module s32_core #(
@@ -180,17 +178,10 @@ module s32_core #(
     output      [7:0] out_lamps
 );
 
-// The universal production profile is a single-screen System 32 build with
-// all supported standard peripherals and the real V25 compiled in. Runtime
-// descriptor bits select the board-specific path; no game-specific QSF is
-// needed. S32_GAME_ONLY_STD implies GAME_ONLY.
-`ifdef S32_OUTRUNNERS
-// One board, one game: take the dedicated-build optimisations (GAME_ONLY ties
-// the protection ROM requester low, so SDRAM p0 has a single client) and the
-// standard-peripheral arm, which is what carries the 837-7536 A/D converter.
-localparam GAME_ONLY     = 1'b1;
-localparam GAME_ONLY_STD = 1'b1;
-`elsif S32_UNIVERSAL
+// The production profile is one resource shape shared by all supported
+// Multi 32 descriptors.  S32_GAME_ONLY_STD implies GAME_ONLY, retaining the
+// ROM-cache/resource optimisation without compiling a separate game image.
+`ifdef S32_UNIVERSAL
 localparam GAME_ONLY     = 1'b1;
 localparam GAME_ONLY_STD = 1'b1;
 `elsif S32_GAME_ONLY_STD
@@ -204,20 +195,17 @@ localparam GAME_ONLY     = 1'b0;
 localparam GAME_ONLY_STD = 1'b0;
 `endif
 
-// This repository builds one board: Sega System Multi 32 (837-8676) running
-// OutRunners.  The configuration is a build constant, not a descriptor field
-// selected at runtime -- Quartus deletes the System 32 arms of every
-// conditional below instead of keeping both and selecting between them.
-// OutRunners is an unprotected board (MAME's init_orunners() installs no
-// protection) with the 837-7536 A/D PCB fitted and no V25, PPI or motor
-// controller.
+// All production titles use the Sega System Multi 32 dual-video shape.  Small
+// board peripherals and title-specific conventions remain descriptor
+// selected; keeping the common Multi 32 datapath build-time constant avoids a
+// second copy of the video/RAM architecture.
 wire       cfg_multi32           = 1'b1;
-wire       cfg_has_adc           = 1'b1;
-wire       cfg_has_ppi           = 1'b0;
+wire       cfg_has_adc           = board.has_adc;
+wire       cfg_has_ppi           = board.has_ppi;
 wire       cfg_has_motor_hle     = 1'b0;
-wire       cfg_sprite_bank_valid = 1'b1;
-wire [1:0] cfg_sprite_bank_mask  = 2'b11;
-wire       cfg_flip_y            = 1'b0;
+wire       cfg_sprite_bank_valid = board.sprite_bank_valid;
+wire [1:0] cfg_sprite_bank_mask  = board.sprite_bank_mask;
+wire       cfg_flip_y            = board.flip_y;
 // A System32-only bitstream must not enter a Multi 32 runtime configuration if
 // it is accidentally paired with a Multi 32 MRA.  The universal source build
 // retains the descriptor-selected path when SYSTEM32_ONLY is false.  GAME_ONLY
@@ -225,14 +213,10 @@ wire       cfg_flip_y            = 1'b0;
 // force the System 32 configuration even if a QSF sets a game macro without
 // S32_SYSTEM32_ONLY (previously that mismatch left is_multi32 following the
 // descriptor while optional hardware it implies was compiled out).
-// The OutRunners revision is a Multi 32 build by construction and must not be
-// caught by that interlock: it sets GAME_ONLY for the dedicated-build
-// optimisations while genuinely being a two-screen board.
-`ifdef S32_OUTRUNNERS
-wire is_multi32 = 1'b1;
-`else
-wire is_multi32 = (SYSTEM32_ONLY || GAME_ONLY) ? 1'b0 : cfg_multi32;
-`endif
+// The production image is intentionally Multi 32-only.  SYSTEM32_ONLY remains
+// available to the standalone System 32 verification profile, while GAME_ONLY
+// no longer changes the runtime board class.
+wire is_multi32 = SYSTEM32_ONLY ? 1'b0 : cfg_multi32;
 
 // ---------------------------------------------------------------------------
 // CPU + bus adapter
@@ -921,6 +905,7 @@ s32_soundsys #(.SYSTEM32_ONLY(SYSTEM32_ONLY)) sound (
     .rst(rst),
     .z80_reset(~io0_cnt2),
     .is_multi32(is_multi32),
+    .game_profile(board.game_profile),
     .sh_cs(m_req && sel_shared),
     .sh_we(m_we && sel_shared),
     .sh_addr(A[12:1]), .sh_be(m_be), .sh_wdata(m_wdata), .sh_rdata(sh_rdata),
@@ -1108,9 +1093,16 @@ generate
     end
 endgenerate
 
-// No PPI on this board (OutRunners never selects the 4/6-player expansion --
-// cfg_has_ppi is always 0, so sel_ppi never fires); s32_i8255 was removed.
-wire [7:0] ppi_q = 8'hff;
+// Multi 32 six-player boards map an 8255A at 0xC00060-0xC00067.  The
+// descriptor gates the chip select, so the universal image retains one small
+// PPI for Hard Dunk without changing the OutRunners/Title Fight map.
+wire [7:0] ppi_q;
+s32_i8255 ppi (
+    .clk(clk_sys), .rst(rst),
+    .cs(m_req && sel_ppi && m_be[0]), .we(m_we),
+    .addr(A[2:1]), .wdata(m_wdata[7:0]), .rdata(ppi_q),
+    .in_pa(ppi_pa), .in_pb(ppi_pb), .in_pc(ppi_pc)
+);
 
 // ---------------------------------------------------------------------------
 // interrupt controller

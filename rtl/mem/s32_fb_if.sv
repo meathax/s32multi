@@ -92,7 +92,6 @@ reg         cap_sel;               // context being captured next/now
 reg         flush_sel;             // oldest queued context (FIFO order)
 reg [1:0]   pending;               // context queued or flushing
 reg         run_active;            // capture in progress on cap_sel
-reg [511:0] flush_msk;             // mask copy latched at flush accept
 
 // Two fetched lines keep producer and consumer ownership separate. DDR fills
 // one bank while scanout reads the other; a completed line is published only
@@ -205,9 +204,12 @@ wire [6:0] run_ram_raddr = (dst == D_IDLE)       ? cap_x0[flush_sel][8:2] :
                                                      + (DDRAM_BUSY ? 7'd1 : 7'd2) :
                                                     run_cur_word;
 
-wire [3:0] run_base_mask = flush_msk[{run_word_base, 2'b00} +: 4];
-wire [3:0] run_cur_mask  = flush_msk[{run_cur_word,  2'b00} +: 4];
-wire [3:0] run_next_mask = flush_msk[{run_next_word, 2'b00} +: 4];
+// cap_msk[flush_sel] is stable from enqueue until the selected run completes;
+// use only the active four-pixel slice instead of copying all 512 bits into a
+// second snapshot register bank.
+wire [3:0] run_base_mask = cap_msk[flush_sel][{run_word_base, 2'b00} +: 4];
+wire [3:0] run_cur_mask  = cap_msk[flush_sel][{run_cur_word,  2'b00} +: 4];
+wire [3:0] run_next_mask = cap_msk[flush_sel][{run_next_word, 2'b00} +: 4];
 wire [7:0] run_base_be = {{2{run_base_mask[3]}}, {2{run_base_mask[2]}},
                            {2{run_base_mask[1]}}, {2{run_base_mask[0]}}};
 wire [7:0] run_cur_be = {{2{run_cur_mask[3]}}, {2{run_cur_mask[2]}},
@@ -363,7 +365,6 @@ always @(posedge clk) begin
                 run_word_q <= cap_x0[flush_sel][8:2];
                 daddr <= pix_addr(cap_bufsel[flush_sel], cap_y[flush_sel],
                                   cap_x0[flush_sel][8:2]);
-                flush_msk <= cap_msk[flush_sel];
                 if (!cap_any[flush_sel]) begin
                     // fully-transparent row: nothing to flush
                     pending[flush_sel] <= 1'b0;

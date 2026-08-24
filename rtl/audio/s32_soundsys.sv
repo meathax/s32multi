@@ -21,6 +21,7 @@ module s32_soundsys #(
     input             rst,          // board/system reset
     input             z80_reset,    // I/O-chip CNT2: sound-CPU reset only
     input             is_multi32,
+    input      [2:0]  game_profile, // descriptor-selected Multi 32 title
 
     // V60 side of shared RAM (16-bit byte-enabled port on the 0x700000 window)
     input             sh_cs,
@@ -143,12 +144,11 @@ reg [ZROM_SET_BITS-1:0] rreq_set;
 reg        rreq_way;
 // The production arrays are deliberately tiny (four asynchronous-read rows
 // per way, 312 tag+data bits total).  Keep them as flat per-way arrays and let
-// Quartus choose logic; claiming MLAB inference for this shallow shape would
-// be misleading and can create an unnecessary block-memory implementation.
-reg [23:1] rtag0 [0:ZROM_CACHE_SETS-1];
-reg [23:1] rtag1 [0:ZROM_CACHE_SETS-1];
-reg [15:0] rdata0 [0:ZROM_CACHE_SETS-1];
-reg [15:0] rdata1 [0:ZROM_CACHE_SETS-1];
+// force them into ALM logic so they do not consume scarce M10K blocks.
+(* ramstyle = "logic" *) reg [23:1] rtag0 [0:ZROM_CACHE_SETS-1];
+(* ramstyle = "logic" *) reg [23:1] rtag1 [0:ZROM_CACHE_SETS-1];
+(* ramstyle = "logic" *) reg [15:0] rdata0 [0:ZROM_CACHE_SETS-1];
+(* ramstyle = "logic" *) reg [15:0] rdata1 [0:ZROM_CACHE_SETS-1];
 reg [ZROM_CACHE_SETS-1:0] rvalid0;
 reg [ZROM_CACHE_SETS-1:0] rvalid1;
 reg [ZROM_CACHE_SETS-1:0] rreplace; // next victim when both ways are valid
@@ -369,8 +369,16 @@ always @(posedge clk) begin
                 8'ha?: sound_bank[5:0] <= z_dout[5:0];
                 8'hb?: begin
                     if (is_multi32) begin
-                        mpcm_bank_hi <= z_dout[5:3];
-                        mpcm_bank_lo <= z_dout[2:0];
+                        // Stadium Cross drives both MultiPCM bank halves from
+                        // the same three-bit latch (MAME scross_bank_w).
+                        if (game_profile == MULTI32_STADIUM_CROSS) begin
+                            mpcm_bank_hi <= z_dout[2:0];
+                            mpcm_bank_lo <= z_dout[2:0];
+                        end
+                        else begin
+                            mpcm_bank_hi <= z_dout[5:3];
+                            mpcm_bank_lo <= z_dout[2:0];
+                        end
                     end
                     else sound_bank[8:6] <= {z_dout[1:0], z_dout[2]};
                 end

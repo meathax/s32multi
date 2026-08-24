@@ -126,20 +126,28 @@ wire  [8:0] spinner_1;
 wire        core_hs, core_vs;
 wire        mode_416_active;
 wire [24:0] ps2_mouse;
-// This RBF accepts one board: Sega System Multi 32 (837-8676) running
-// OutRunners. Pin the runtime descriptor to that board's configuration so a
-// mismatched MRA cannot select hardware this image does not contain, and so
-// Quartus can fold every System-32-only arm away entirely: two 315-5296 I/O
-// chips on two JAMMA edges, two 315-5388/5242 video paths, a V70 at 20 MHz,
-// the 837-7536 analog PCB, no V25 MCU, no protection responder.
+// This RBF contains the common Sega System Multi 32 (837-8676) hardware used
+// by the supported Multi 32 titles.  The descriptor is committed by the ROM
+// loader after all region downloads and selects only small board/profile
+// differences; the dual 315-5296 I/O, dual 315-5388/5242 video, V70, and
+// shared MultiPCM architecture stay common to every title.
 always @(*) begin
-    active_board = '0;
-    active_board.multi32          = 1'b1;
-    active_board.has_adc          = 1'b1;
-    active_board.analog_profile   = ANALOG_DRIVING;
-    active_board.sprite_bank_valid = 1'b1;
-    active_board.sprite_bank_mask = 2'b11;
-    active_board.digital_profile  = DIGITAL_GENERIC;
+    // Keep old all-zero descriptors usable while the descriptor-only boot
+    // commit is in flight.  A production descriptor with multi32=1 is then
+    // consumed verbatim, including title-specific I/O flags.
+    if (board_desc.multi32) begin
+        active_board = board_desc;
+    end
+    else begin
+        active_board = '0;
+        active_board.multi32           = 1'b1;
+        active_board.has_adc           = 1'b1;
+        active_board.analog_profile    = ANALOG_DRIVING;
+        active_board.sprite_bank_valid = 1'b1;
+        active_board.sprite_bank_mask  = 2'b11;
+        active_board.digital_profile   = DIGITAL_GENERIC;
+        active_board.game_profile      = MULTI32_OUTRUNNERS;
+    end
 end
 
 assign VGA_F1 = 0;
@@ -474,6 +482,51 @@ s32_fb_if fb (
 function automatic [7:0] p_dig(input [31:0] j);
     p_dig = ~{j[1], j[0], j[3], j[2], 1'b0, j[6], j[5], j[4]};
 endfunction
+// Hard Dunk's four action buttons occupy the low nibble of each 315-5296
+// player port; directions remain in bits 4..7.  Keep this separate from the
+// three-button generic mapping so unused input bits never become a phantom
+// action on a different title.
+function automatic [7:0] p_dig4(input [31:0] j);
+    p_dig4 = ~{j[1], j[0], j[3], j[2], j[7], j[6], j[5], j[4]};
+endfunction
+// Title Fight has two independent sticks per player.  MiSTer exposes each
+// stick as signed X/Y bytes (X=[7:0], Y=[15:8]); retain the digital d-pad as a
+// fallback for keyboard/joypad users and assert only the corresponding
+// active-low direction bit.  The 24-count dead zone is below the MAME
+// joystick's normal digital threshold and avoids centre jitter.
+function automatic [7:0] title_stick(input [31:0] j, input [15:0] a);
+    reg signed [7:0] x;
+    reg signed [7:0] y;
+    reg [7:0] p;
+    begin
+        x = a[7:0];
+        y = a[15:8];
+        p = 8'hff;
+        if ((x < -8'sd24) || j[1]) p[7] = 1'b0;
+        if ((x >  8'sd24) || j[0]) p[6] = 1'b0;
+        if ((y < -8'sd24) || j[3]) p[5] = 1'b0;
+        if ((y >  8'sd24) || j[2]) p[4] = 1'b0;
+        title_stick = p;
+    end
+endfunction
+// Title Fight's right-hand stick can be driven by the MiSTer right analog
+// axis or by four independently assignable action buttons. The left-hand
+// stick continues to use the physical D-pad as its digital fallback.
+function automatic [7:0] title_right_stick(input [31:0] j, input [15:0] a);
+    reg signed [7:0] x;
+    reg signed [7:0] y;
+    reg [7:0] p;
+    begin
+        x = a[7:0];
+        y = a[15:8];
+        p = 8'hff;
+        if ((x < -8'sd24) || j[4]) p[7] = 1'b0; // Right stick left / B1
+        if ((x >  8'sd24) || j[5]) p[6] = 1'b0; // Right stick right / B2
+        if ((y < -8'sd24) || j[6]) p[5] = 1'b0; // Right stick up / B3
+        if ((y >  8'sd24) || j[7]) p[4] = 1'b0; // Right stick down / B4
+        title_right_stick = p;
+    end
+endfunction
 wire [7:0] p1a_dig = p_dig(joystick_0);
 // Rad Mobile leaves raw player-port bit 0 unused and places its two cabinet
 // switches, Light and Wiper, on bits 1/2.  Drive them from B3/B4 rather than
@@ -489,7 +542,78 @@ wire [7:0] p2a_dig = p_dig(joystick_1);
 // active_board above, so every branch that used to key off them is gone too.
 assign USER_OUT = 7'h7f;
 
-wire [7:0] core_p1a = p1a_dig;
+wire [7:0] title_p1_left  = title_stick(joystick_0, joystick_l_analog_0);
+wire [7:0] title_p1_right = title_right_stick(joystick_0, joystick_r_analog_0);
+wire [7:0] title_p2_left  = title_stick(joystick_1, joystick_l_analog_1);
+wire [7:0] title_p2_right = title_right_stick(joystick_1, joystick_r_analog_1);
+
+// Hard Dunk is the six-player Multi 32 board: the first two players use the
+// primary 5296, players 4/5 use the second 5296, and players 3/6 arrive on
+// the 8255 PPI's A/B ports.  p_dig4 matches the MAME byte layout exactly:
+// buttons 1..4 occupy bits 0..3 and the 8-way directions occupy bits 4..7.
+wire [7:0] hard_p1a = p_dig4(joystick_0);
+wire [7:0] hard_p2a = p_dig4(joystick_1);
+wire [7:0] hard_p3a = p_dig4(joystick_2);
+wire [7:0] hard_p4a = p_dig4(joystick_3);
+wire [7:0] hard_p5a = p_dig4(joystick_4);
+wire [7:0] hard_p6a = p_dig4(joystick_5);
+// The Multi 32 board exposes players 4/5 on the second 5296 and
+// players 3/6 on the 8255; keep the game-player numbering explicit.
+wire [7:0] hard_p1b = hard_p4a;
+wire [7:0] hard_p2b = hard_p5a;
+wire [7:0] hard_ppi_pa = hard_p3a;
+wire [7:0] hard_ppi_pb = hard_p6a;
+// Hard Dunk's EXTRA3 PPI bits are START3 (bit 0) and START6 (bit 1)
+// MiSTer START is joystick bit 10; bit 11 is COIN
+wire [7:0] hard_ppi_pc = ~{6'b000000, joystick_5[10], joystick_2[10]};
+
+// Stadium Cross exposes one three-button control group per Multi 32 I/O
+// board.  MAME's Attack and Brake inputs are active low while Wheelie is
+// active high; map them to MiSTer's A/B/X buttons without touching the
+// unused port bits.  The normal (non-link) sets still have independent P1
+// analog wheel/pedal channels on both boards.
+function automatic [7:0] scross_ctrl(input [31:0] j, input [7:0] left_y);
+    reg [7:0] p;
+    reg signed [8:0] y;
+    begin
+        p = 8'hff;
+        y = $signed({left_y[7], left_y});
+        p[0] = ~j[4]; // Attack (BUTTON1, active low)
+        p[1] =  j[5]; // Wheelie (BUTTON2, active high)
+        p[2] = ~j[6]; // Brake (BUTTON3, active low)
+        // The pinned driver leaves these cabinet lines unknown; expose them
+        // as the requested handlebar pitch controls.  MiSTer Y-up is the
+        // forward direction, and the physical input is active low.
+        p[3] = ~((y < -9'sd24) || j[3] || j[8]); // Handlebar forward / up
+        p[4] = ~((y >  9'sd24) || j[2] || j[9]); // Handlebar back / down
+        scross_ctrl = p;
+    end
+endfunction
+wire [7:0] scross_p1a = scross_ctrl(joystick_0, joystick_l_analog_0[15:8]);
+wire [7:0] scross_p1b = scross_ctrl(joystick_1, joystick_l_analog_1[15:8]);
+// Stadium Cross has three cabinet buttons in MAME (Attack/Wheelie/Brake),
+// while MiSTer also exposes an assignable digital accelerator and the two
+// handlebar pitch buttons above.  D-pad up/down are pitch fallbacks, not
+// pedal inputs; the analog pedal remains on the right-stick Y axis.
+wire stadium_cross = active_board.game_profile == MULTI32_STADIUM_CROSS;
+wire p1_digital_accel = stadium_cross
+                      ? joystick_0[7]
+                      : joystick_0[9];
+wire p1_digital_brake = stadium_cross
+                      ? 1'b0
+                      : joystick_0[10];
+wire p2_digital_accel = stadium_cross
+                      ? joystick_1[7]
+                      : joystick_1[9];
+wire p2_digital_brake = stadium_cross
+                      ? 1'b0
+                      : joystick_1[10];
+wire [7:0] core_p1a = (active_board.game_profile == MULTI32_TITLE_FIGHT) ?
+                      title_p1_left :
+                      (active_board.game_profile == MULTI32_STADIUM_CROSS) ?
+                      scross_p1a :
+                      (active_board.game_profile == MULTI32_HARD_DUNK) ?
+                      hard_p1a : p1a_dig;
 // OutRunners routes PLAYER 1's music keys through the P2_A port (MAME
 // INPUT_PORTS_START(orunners): P2_A bit0 = P1 DJ/music, bit1 = P1 track <<,
 // bit2 = P1 track >>). Feeding p2a_dig (the second player's shift buttons)
@@ -497,13 +621,32 @@ wire [7:0] core_p1a = p1a_dig;
 // in-game. Player 2's own controls live on the second I/O chip: P1_B carries
 // P2 shift up/down and P2_B carries P2's music keys (wired at the s32_core
 // instantiation below).
-wire [7:0] core_p2a = {5'h1f, ~joystick_0[8], ~joystick_0[7], ~joystick_0[6]};
+wire [7:0] core_p2a = (active_board.game_profile == MULTI32_TITLE_FIGHT) ?
+                      title_p1_right :
+                      (active_board.game_profile == MULTI32_STADIUM_CROSS) ?
+                      8'hff :
+                      (active_board.game_profile == MULTI32_HARD_DUNK) ?
+                      hard_p2a :
+                      {5'h1f, ~joystick_0[8], ~joystick_0[7], ~joystick_0[6]};
+wire [7:0] core_p1b = (active_board.game_profile == MULTI32_TITLE_FIGHT) ?
+                      title_p2_left :
+                      (active_board.game_profile == MULTI32_STADIUM_CROSS) ?
+                      scross_p1b :
+                      (active_board.game_profile == MULTI32_HARD_DUNK) ?
+                      hard_p1b : p_dig(joystick_1);
+wire [7:0] core_p2b = (active_board.game_profile == MULTI32_TITLE_FIGHT) ?
+                      title_p2_right :
+                      (active_board.game_profile == MULTI32_STADIUM_CROSS) ?
+                      8'hff :
+                      (active_board.game_profile == MULTI32_HARD_DUNK) ?
+                      hard_p2b :
+                      {5'h1f, ~joystick_1[8], ~joystick_1[7], ~joystick_1[6]};
 
 wire [7:0] adc_ch [0:7];
 // MiSTer reports each analog-stick axis as signed -128..+127. Split the right
 // stick's vertical axis into independent, released-at-zero pedals: up is
-// accelerator and down is brake. Saturating magnitude 127/128 to 255 lets
-// both directions reach the cabinet ADC endpoint without a multiplier.
+// accelerator and down is brake. Stadium Cross uses the left-stick Y axis for
+// handlebar pitch in scross_ctrl above; its physical pedals remain on right Y.
 wire [7:0] driving_wheel;
 wire [7:0] driving_accel;
 wire [7:0] driving_brake;
@@ -518,11 +661,11 @@ s32_driving_controls driving_controls (
     .spinner(spinner_0),
     .wheel_source(status[40:39]),
     .right_y(joystick_r_analog_0[15:8]),
-    // Dedicated assignable Accelerate/Brake buttons (MRA buttons 6/7,
-    // joystick bits 9/10). These used to alias Shift Up/Down (bits 4/5),
-    // so shifting gear also floored the digital pedal.
-    .digital_accel(joystick_0[9]),
-    .digital_brake(joystick_0[10]),
+    // Dedicated digital pedal fallbacks. OutRunners uses MRA buttons 6/7
+    // (joystick bits 9/10); Stadium Cross retains only its named B4
+    // accelerator fallback. D-pad up/down belong to handlebar pitch.
+    .digital_accel(p1_digital_accel),
+    .digital_brake(p1_digital_brake),
     .digital_left(joystick_0[1]),
     .digital_right(joystick_0[0]),
     .wheel(driving_wheel),
@@ -549,8 +692,8 @@ s32_driving_controls driving_controls_p2 (
     .spinner(spinner_1),
     .wheel_source(status[42:41]),
     .right_y(joystick_r_analog_1[15:8]),
-    .digital_accel(joystick_1[9]),
-    .digital_brake(joystick_1[10]),
+    .digital_accel(p2_digital_accel),
+    .digital_brake(p2_digital_brake),
     .digital_left(joystick_1[1]),
     .digital_right(joystick_1[0]),
     .wheel(driving_wheel_p2),
@@ -563,14 +706,14 @@ s32_driving_controls driving_controls_p2 (
 // full-scale digital fallbacks. The default analog path remains direct.
 // Channel layout matches MAME's fixed ANALOG1/2 + banked ANALOG3/4 (bank 0)
 // and ANALOG7/8 (bank 1) -- see the s32_msm6253 instantiation comment.
-assign adc_ch[0] = driving_wheel;      // ANALOG1: P1 wheel (fixed)
-assign adc_ch[1] = driving_accel;      // ANALOG2: P1 accel (fixed)
-assign adc_ch[2] = driving_brake;      // ANALOG3: P1 brake (bank 0)
-assign adc_ch[3] = driving_wheel_p2;   // ANALOG4: P2 wheel (bank 0)
+assign adc_ch[0] = stadium_cross ? ~driving_wheel : driving_wheel;
+assign adc_ch[1] = driving_accel;      // ANALOG2: P1 accel/pedal (fixed)
+assign adc_ch[2] = stadium_cross ? ~driving_wheel_p2 : driving_brake;
+assign adc_ch[3] = stadium_cross ? driving_accel_p2 : driving_wheel_p2;
 assign adc_ch[4] = 8'h80;              // unused: an0/an1 never read bank 1
 assign adc_ch[5] = 8'h80;              // unused: an0/an1 never read bank 1
-assign adc_ch[6] = driving_accel_p2;   // ANALOG7: P2 accel (bank 1)
-assign adc_ch[7] = driving_brake_p2;   // ANALOG8: P2 brake (bank 1)
+assign adc_ch[6] = stadium_cross ? 8'h80 : driving_accel_p2;
+assign adc_ch[7] = stadium_cross ? 8'h80 : driving_brake_p2;
 // MAME system32_generic: port C is unused; port E/SERVICE12 is
 // {unknown[7:6], start2, start1, coin2, coin1, test, service}, active low.
 // Test = the OSD "Service Mode" toggle OR the local cockpit's mappable Test
@@ -585,11 +728,15 @@ wire test_btn_b = status[7] | joystick_1[13];
 wire svc_btn_b  = joystick_1[14];
 wire [7:0] svc12 = ~{
                       2'b00,
+                      joystick_1[10],
+                      joystick_0[10],
                       joystick_1[11],
                       joystick_0[11],
-                      joystick_1[12],
-                      joystick_0[12],
                       test_btn_a, svc_btn_a};
+// Multi32_GENERIC leaves SERVICE12_A bit 3 unused. Hard Dunk keeps the
+// primary board's coin1 on bit 2 while retaining starts 1/2 on bits 4/5.
+wire [7:0] hard_svc12 = ~{2'b00, joystick_1[10], joystick_0[10],
+                          1'b0, joystick_0[11], test_btn_a, svc_btn_a};
 // Port F/SERVICE34: bits 3:0 = DIP SW1:1-4 (Off), bit4 = PCB Push SW1
 // (Service), bit5 = PCB Push SW2 (Test), bit6 unknown; bit7 is replaced by the
 // EEPROM DO line inside s32_core.  Some games poll the PCB push switches
@@ -598,9 +745,23 @@ wire [7:0] svc12 = ~{
 wire [7:0] svc34 = ~{2'b00, test_btn_a, svc_btn_a, 4'b0000};
 // Board B (screen B, joystick_1's own board) gets its own service/test pair,
 // coin and start. Its second coin door/start lane is not wired on OutRunners.
-wire [7:0] svc12_b = ~{2'b00, 1'b0, joystick_1[11], 1'b0, joystick_1[12],
+wire [7:0] svc12_b = ~{2'b00, 1'b0, joystick_1[10], 1'b0, joystick_1[11],
                         test_btn_b, svc_btn_b};
+// Title Fight's second Multi 32 I/O chip exposes starts 3/4 on bits 4/5 and
+// keeps the generic board-B service/test/coin lanes.
+wire [7:0] title_svc12_b = ~{2'b00, joystick_3[10], joystick_2[10],
+                             1'b0, joystick_1[11], test_btn_b, svc_btn_b};
+// Hard Dunk's second 5296 carries starts 4/5 on bits 4/5; its generic
+// service/test/coin2 lanes remain on bits 0/1/2.
+wire [7:0] hard_svc12_b = ~{2'b00, joystick_4[10], joystick_3[10],
+                            1'b0, joystick_1[11], test_btn_b, svc_btn_b};
 wire [7:0] svc34_b = ~{2'b00, test_btn_b, svc_btn_b, 4'b0000};
+wire [7:0] core_svc12 = (active_board.game_profile == MULTI32_HARD_DUNK) ?
+                        hard_svc12 : svc12;
+wire [7:0] core_svc12_b = (active_board.game_profile == MULTI32_TITLE_FIGHT) ?
+                          title_svc12_b :
+                          (active_board.game_profile == MULTI32_HARD_DUNK) ?
+                          hard_svc12_b : svc12_b;
 // GA2's 4-player i8255 port C is MAME EXTRA3 (ppi.in_pc_callback -> "EXTRA3").
 // Base sets: bit0=Start3, bit1=Start4, bits[7:2] unused. The US sets (ga2u,
 // spidmanu, arabfgtu) instead read COIN1 on bit3 (0x08) and COIN2 on bit2
@@ -624,12 +785,18 @@ wire [7:0] darkedge_ppi_pb = {~joystick_0[8], 1'b1,
                               ~joystick_1[8], ~joystick_1[7], ~joystick_1[6]};
 wire brival_inputs = 1'b0;  // Burning Rival protection removed -- other-game hardware
 wire darkedge_inputs = 1'b0;  // Dark Edge protection removed -- other-game hardware
-wire [7:0] core_ppi_pa = (brival_inputs || darkedge_inputs) ? 8'hff :
-                          p_dig(joystick_2);
-wire [7:0] core_ppi_pb = brival_inputs ? brival_ppi_pb :
-                          darkedge_inputs ? darkedge_ppi_pb : p_dig(joystick_3);
-wire [7:0] core_ppi_pc = (brival_inputs || darkedge_inputs) ? 8'hff :
-                          ga2_ppi_pc;
+wire [7:0] core_ppi_pa = (active_board.game_profile == MULTI32_HARD_DUNK) ?
+                          hard_ppi_pa :
+                          ((brival_inputs || darkedge_inputs) ? 8'hff :
+                           p_dig(joystick_2));
+wire [7:0] core_ppi_pb = (active_board.game_profile == MULTI32_HARD_DUNK) ?
+                          hard_ppi_pb :
+                          (brival_inputs ? brival_ppi_pb :
+                           darkedge_inputs ? darkedge_ppi_pb : p_dig(joystick_3));
+wire [7:0] core_ppi_pc = (active_board.game_profile == MULTI32_HARD_DUNK) ?
+                          hard_ppi_pc :
+                          ((brival_inputs || darkedge_inputs) ? 8'hff :
+                           ga2_ppi_pc);
 
 //////////////////////////////   CORE   ///////////////////////////////////////
 wire [23:0] rgb_a, rgb_b;
@@ -638,9 +805,6 @@ wire [8:0] core_hcnt;   // native raster X, for the splitscreen composer below
 wire signed [15:0] aud_l, aud_r;
 s32_core core (
     .clk_sys(clk_sys), .clk_ram(clk_ram),
-`ifdef S32_UNIVERSAL
-    .clk_v25(clk_v25),
-`endif
     .rst(reset), .video_rst(video_reset),
     .board(active_board),
     .screen_sel(status[6]),
@@ -683,13 +847,12 @@ s32_core core (
     .eep_rd_data(eep_rd_data), .eep_rd_addr(eep_rd_addr),
     .eep_upload(eep_upload), .eep_modified(eep_modified),
     .in_p1a(core_p1a), .in_p2a(core_p2a),
-    .in_portc(portc), .in_svc12(svc12), .in_svc34(svc34),
+    .in_portc(portc), .in_svc12(core_svc12), .in_svc34(svc34),
     // Second cockpit (Player 2, joystick_1): P1_B bits 1:0 = P2 shift
     // up/down, P2_B bits 2:0 = P2 DJ/music + track <</>> (MAME
     // INPUT_PORTS_START(orunners) P1_B/P2_B).
-    .in_p1b(p_dig(joystick_1)),
-    .in_p2b({5'h1f, ~joystick_1[8], ~joystick_1[7], ~joystick_1[6]}),
-    .in_portc_b(8'hff), .in_svc12_b(svc12_b), .in_svc34_b(svc34_b),
+    .in_p1b(core_p1b), .in_p2b(core_p2b),
+    .in_portc_b(8'hff), .in_svc12_b(core_svc12_b), .in_svc34_b(svc34_b),
     .adc_ch(adc_ch),
     .ppi_pa(core_ppi_pa), .ppi_pb(core_ppi_pb), .ppi_pc(core_ppi_pc),
     .adc0_load(adc0_load),

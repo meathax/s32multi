@@ -101,6 +101,10 @@ package s32_pkg;
         logic       dual_comm_ff;   // dual-PCB comm RAM reset state (F1 Exhaust Note)
         logic       gear_toggle;    // edge-latched two-state cabinet gear input
         logic [1:0] digital_profile; // player-port layout (DIGITAL_*)
+        // Multi 32 title-specific I/O/audio conventions.  This is deliberately
+        // a small descriptor selector rather than a synthesis-time game macro:
+        // all supported titles share the same dual-video/MultiPCM hardware.
+        logic [2:0] game_profile;
     } board_desc_t;
 
     localparam [1:0] ANALOG_CENTERED = 2'd0; // sticks/guns: all channels rest at 80
@@ -108,6 +112,11 @@ package s32_pkg;
     localparam [1:0] ANALOG_ALL_FF   = 2'd2; // unknown pull-ups (dbzvrvs)
     localparam [1:0] DIGITAL_GENERIC = 2'd0;
     localparam [1:0] DIGITAL_RADM    = 2'd1; // bit0 unused, Light/Wiper on 1/2
+
+    localparam [2:0] MULTI32_OUTRUNNERS   = 3'd0;
+    localparam [2:0] MULTI32_TITLE_FIGHT  = 3'd1;
+    localparam [2:0] MULTI32_HARD_DUNK   = 3'd2;
+    localparam [2:0] MULTI32_STADIUM_CROSS = 3'd3;
 
     // HLE protection selects (prot_sel)
     localparam [6:0] PROT_NONE     = 7'd0;

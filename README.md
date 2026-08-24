@@ -1,14 +1,17 @@
-# Sega System Multi 32: OutRunners for MiSTer FPGA
+# Sega System Multi 32: Multi 32 games for MiSTer FPGA
 
-MiSTer FPGA core for Sega's OutRunners Multi 32 cockpit board
-(837-8676 / 171-6253C). It targets the DE10-Nano with SDRAM and uses the
-single production image `Arcade-SegaSystem32Multi.rbf`; the three OutRunners
-MRAs select the World, US, or Japan ROM set.
+MiSTer FPGA core for Sega's System Multi 32 board family
+(837-8676 / 171-6253C). It targets the DE10-Nano with SDRAM and uses one
+descriptor-selected production image, `Arcade-SegaSystem32Multi.rbf`. The
+MRAs select the supported OutRunners, Title Fight, Hard Dunk, and Stadium Cross
+ROM sets without creating per-game Quartus images.
 
-This production profile is OutRunners-only. It contains the dual-screen
-Multi 32 video path, two cockpit I/O lanes, the 837-7536 analog board, and the
-315-5560 MultiPCM path. Other System 32, Multi 32, and AS-1 games are not
-supported. Commercial ROMs are not included.
+This production profile contains the common dual-screen Multi 32 video path,
+two 315-5296 cockpit I/O lanes, the 837-7536 analog board, the Hard Dunk
+mode-0 8255 expansion, and the 315-5560 MultiPCM path. Stadium Cross link mode
+(`scrossa`) is intentionally not emitted; the supported Stadium Cross sets are
+the normal non-link cabinets. Other System 32, Multi 32, and AS-1 games are
+not supported. Commercial ROMs are not included.
 
 ## Features in the OSD
 
@@ -19,19 +22,32 @@ supported. Commercial ROMs are not included.
 - Persistent 128-byte 93C46 high-score/settings storage
 - Service mode and reset, with independent Test/Service controls for each
   cockpit
-- OutRunners controls from each MRA: Shift Up, Shift Down, DJ/Music, previous
-  track, next track, Accelerate, Brake, Start, Coin, Test, and Service
-- Independent P1/P2 steering from analog wheel/stick coordinates, absolute
-  paddle devices, or relative spinners, including reversible spinner direction
+- Descriptor-selected controls for each supported cabinet:
+  - OutRunners: shift up/down, DJ/music, track previous/next, accelerator,
+    brake, start, coin, test, and service
+  - Title Fight: P1/P2 left-hand sticks on the left analog sticks or D-pad
+    directions; right-hand sticks on the right analog sticks or named Right
+    Stick Left/Right/Up/Down buttons; start, coin, test, and service
+  - Hard Dunk: six independent digital joysticks for the 3-vs-3 cabinet, each
+    with named Button 1/2/3/4 controls, plus player starts, coin, test, and
+    service
+  - Stadium Cross: P1/P2 left-analog X steering with D-pad left/right fallback;
+    right-analog Y accelerator/brake, left-analog Y handlebar pitch (up pushes
+    forward, down pulls back), D-pad up/down pitch fallback, Attack, Wheelie,
+    Brake, Accelerate, Handlebar Forward, Handlebar Back, start, coin, test,
+    and service
+- Independent P1/P2 steering from signed analog wheel/stick coordinates,
+  absolute paddle devices, or relative spinners, including reversible spinner
+  direction
 - Accelerator and brake inputs from analog axes or dedicated digital fallbacks
 
 ## PCB Accuracy
 
 This table lists only shared custom-chip roles supported by the available
-schematic or silicon evidence. OutRunners-specific Multi 32 PCB captures are
-not currently in the evidence ledger, so this is not a blanket board-level or
-cycle-accuracy claim. Open timing, analogue, PLD, and protection questions are
-tracked in the [PCB evidence ledger](docs/pcb/system32_evidence.json).
+schematic or silicon evidence. It is not a blanket board-level or
+cycle-accuracy claim for every supported title. Open timing, analogue, PLD,
+protection, and link-board questions are tracked in the [PCB evidence
+ledger](docs/pcb/system32_evidence.json).
 
 | Area | Evidence | Core implementation |
 | --- | --- | --- |
@@ -45,14 +61,22 @@ detailed source record.
 
 ## Supported games
 
-The three tracked MRA variants use the same production RBF:
+All supported variants use the same production RBF:
 
 - **OutRunners (World):** MAME set `orunners`
 - **OutRunners (US):** MAME set `orunnersu`, parent `orunners`
 - **OutRunners (Japan):** MAME set `orunnersj`, parent `orunners`
+- **Title Fight (World):** MAME set `titlef`
+- **Title Fight (US):** MAME set `titlefu`, parent `titlef`
+- **Title Fight (Japan):** MAME set `titlefj`, parent `titlef`
+- **Hard Dunk (World):** MAME set `harddunk`
+- **Hard Dunk (Japan):** MAME set `harddunkj`, parent `harddunk`
+- **Stadium Cross (World):** MAME set `scross`
+- **Stadium Cross (US):** MAME set `scrossu`, parent `scross`
 
-No other System 32, Multi 32, or AS-1 set is emitted by `tools/gen_mra.py` or
-supported by this production profile.
+The linkable Stadium Cross clone (`scrossa`) and all other System 32, Multi 32,
+or AS-1 sets are intentionally not emitted by `tools/gen_mra.py` or supported
+by this production profile.
 
 ## **Hardware emulated**
 
@@ -63,7 +87,8 @@ supported by this production profile.
 | 315-5386 / 315-5387 video engines | Objects, four tilemap layers, VRAM, and buffered dual-screen frame memory | [`s32_sprite.sv`](rtl/video/s32_sprite.sv), [`s32_tilemap.sv`](rtl/video/s32_tilemap.sv), [`s32_fb_if.sv`](rtl/mem/s32_fb_if.sv) |
 | Dual 315-5388 / 315-5242 video output | Two palettes, priority, shadow/highlight, RGB, and A/B composition | [`s32_mixer.sv`](rtl/video/s32_mixer.sv), [`s32_palette.sv`](rtl/video/s32_palette.sv), [`s32_splitscreen_composer.sv`](rtl/video/s32_splitscreen_composer.sv) |
 | BR93C46 EEPROM | Serial NVRAM and MiSTer upload/download | [`s32_io.sv`](rtl/io/s32_io.sv) |
-| 837-7536 / OKI M6253 A/D board | Four-channel ADC for P1/P2 steering, accelerator, and brake | [`s32_driving_controls.sv`](rtl/io/s32_driving_controls.sv), [`s32_io.sv`](rtl/io/s32_io.sv) |
+| 837-7536 / OKI M6253 A/D board | Four-channel ADC for title-selected P1/P2 steering, accelerator, and brake channels | [`s32_driving_controls.sv`](rtl/io/s32_driving_controls.sv), [`s32_io.sv`](rtl/io/s32_io.sv) |
+| Multi 32 8255A expansion | Descriptor-gated mode-0 PPI for Hard Dunk's players 3/6 and control latches | [`s32_io.sv`](rtl/io/s32_io.sv), [`Arcade-SegaSystem32Multi.sv`](Arcade-SegaSystem32Multi.sv) |
 | Z80 sound CPU | 8 MHz Multi 32 sound domain | [`s32_soundsys.sv`](rtl/audio/s32_soundsys.sv), vendored [`T80`](rtl/audio/T80/) |
 | YM3438 | One FM sound device at the Multi 32 sound rate | [`JT12`](rtl/audio/jt12/), [`s32_soundsys.sv`](rtl/audio/s32_soundsys.sv) |
 | Sega 315-5560 MultiPCM | 10 MHz sample engine, 28 voices, SDRAM sample ROM | [`s32_multipcm.sv`](rtl/audio/s32_multipcm.sv) |
@@ -71,8 +96,8 @@ supported by this production profile.
 
 ## Credits
 
-- **Meathax** - OutRunners RTL, integration, MRA generation, verification, and
-  packaging.
+- **Meathax** - System Multi 32 RTL, descriptor routing, MRA generation,
+  verification, and packaging for the supported Multi 32 titles.
 - **Sega, Nemesis1207, and System 32 researchers** - original hardware and
   public schematic material recorded in [the source ledger](docs/references.md).
 - **MAME developers** - [System 32/Multi 32 behavioural reference](https://github.com/mamedev/mame).
@@ -116,7 +141,7 @@ db_url = https://raw.githubusercontent.com/meathax/meatcores/db/downloader_meath
 
 ## Development
 
-Quartus Prime 17.0.2 Build 602 is the pinned toolchain. Build the OutRunners
-production profile with `tools/build-segas32.bat`. See
+Quartus Prime 17.0.2 Build 602 is the pinned toolchain. Build the universal
+Multi 32 production profile with `tools/build-segas32.bat`. See
 [PROFILE_CONTRACT.md](PROFILE_CONTRACT.md) for profile rules and verification
 commands.

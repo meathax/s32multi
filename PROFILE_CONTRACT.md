@@ -2,6 +2,30 @@
 
 This is the persistent cross-chat routing record for the core.
 
+## 2026-08-24: descriptor-selected Multi 32 game support
+
+The universal production profile now routes the common Sega System Multi 32
+hardware to the supported OutRunners (`orunners`), Title Fight (`titlef`),
+Hard Dunk (`harddunk`), and Stadium Cross (`scross`) parents and their emitted
+regional clones. All use `Arcade-SegaSystem32Multi`; no per-game Quartus
+revision or synthesis macro was added. Stadium Cross `scrossa` (linkable mode)
+remains intentionally excluded.
+
+Title Fight uses the existing dual I/O lanes for its four stick directions.
+Hard Dunk enables the descriptor-gated mode-0 8255A at `0xc00060` and routes
+players 3/6 through its A/B/C inputs. Stadium Cross selects its reversed
+P1/P2 steering ADC channels, pedals, three-button control ports, and shared
+three-bit MultiPCM bank write. The descriptor carries the title selector in
+byte 4 bits 4:2; common video, RAM, clocks, and ROM layout remain unchanged.
+
+Focused Icarus checks pass for the universal core, Hard Dunk PPI, Stadium
+Cross sound-bank behavior, and MRA descriptor routing. Sequential Quartus
+17.0.2 Analysis & Synthesis and Fitter runs passed for each title iteration;
+the final Stadium Cross fit (`20260824-043006-450-fit`) reports 41,078/41,910
+ALMs, 550/553 RAM blocks, 59 DSP blocks, and zero fitter errors. Physical
+MiSTer input/gameplay verification and a post-change assembled RBF remain
+pending for a separately authorized release build.
+
 ## 2026-08-23: independent P1/P2 paddle and spinner steering
 
 The OutRunners top previously exposed P1/P2 signed analog-stick steering but

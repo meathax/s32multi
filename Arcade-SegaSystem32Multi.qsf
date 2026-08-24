@@ -291,18 +291,19 @@ set_global_assignment -name SEED 2
 # and not a hardware change.
 set_global_assignment -name NUM_PARALLEL_PROCESSORS 2
 
-# This repository targets one board and one game: OutRunners on Sega System
-# Multi 32 (GAME BD 834-9559-02, MAIN BD 837-8676 / 171-6253C, ROM BD
-# 837-9560-02, A/D BD 837-7536).  S32_OUTRUNNERS pins the runtime
-# configuration to that board -- two 315-5296 I/O chips, two 315-5388/5242
-# video paths, one YM3438 plus one 315-5560 MultiPCM, the M6253 analog board
-# -- so Quartus folds the System 32 arms away instead of selecting between
-# them at runtime.
+# This repository targets the shared Sega System Multi 32 production profile
+# (GAME BD 834-9559-02, MAIN BD 837-8676 / 171-6253C, ROM BD 837-9560-02).
+# Title descriptors select the small input/ADC/PPI conventions at runtime;
+# the dual 315-5296 I/O, dual 315-5388/5242 video paths, YM3438, MultiPCM,
+# and Multi 32 work-RAM shape remain common to every supported set.
 #
 # S32_SYSTEM32_ONLY is deliberately absent: it compiles out the second palette
 # and mixer and halves work RAM, which is exactly the Multi 32 hardware this
 # core needs.
-set_global_assignment -name VERILOG_MACRO "S32_OUTRUNNERS=1"
+set_global_assignment -name VERILOG_MACRO "S32_PROFILE_STANDARD=1"
+set_global_assignment -name VERILOG_MACRO "S32_GAME_ONLY_STD=1"
+set_global_assignment -name VERILOG_MACRO "S32_UNIVERSAL=1"
+set_global_assignment -name VERILOG_MACRO "S32_V25_HW=1"
 set_global_assignment -name VERILOG_MACRO "S32_PCB_TIMING=1"
 # 2026-08-06: two independent audits confirmed fp_valid() (rtl/cpu/v60/
 # s32_v60.sv) exactly mirrors MAME's s_Op5CTable/s_Op5FTable dispatch

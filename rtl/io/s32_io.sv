@@ -83,6 +83,73 @@ end
 
 endmodule
 
+// ---------------------------------------------------------------------------
+// Intel 8255A-compatible mode-0 PPI used by the Multi 32 six-player board.
+// Hard Dunk only reads the three input ports, but retaining the latches and
+// bit set/reset operation keeps the register contract correct for service
+// firmware and makes the block reusable by the other documented 8255 boards.
+// The board reset value is the 8255A all-input mode-0 control word (9Bh).
+module s32_i8255 (
+    input             clk,
+    input             rst,
+    input             cs,
+    input             we,
+    input       [1:0] addr,
+    input       [7:0] wdata,
+    output reg  [7:0] rdata,
+    input       [7:0] in_pa,
+    input       [7:0] in_pb,
+    input       [7:0] in_pc
+);
+
+reg [7:0] port_a;
+reg [7:0] port_b;
+reg [7:0] port_c;
+reg [7:0] control;
+
+always @(posedge clk) begin
+    if (rst) begin
+        port_a <= 8'h00;
+        port_b <= 8'h00;
+        port_c <= 8'h00;
+        control <= 8'h9b;
+    end
+    else if (cs && we) begin
+        case (addr)
+            2'd0: port_a <= wdata;
+            2'd1: port_b <= wdata;
+            2'd2: port_c <= wdata;
+            2'd3: begin
+                if (wdata[7]) begin
+                    // Mode 0 is the only mode present on the Sega board.
+                    // Preserve the direction bits and force the mode fields
+                    // to zero rather than modelling unsupported strobes.
+                    control <= {1'b1, 2'b00, wdata[4], wdata[3],
+                                1'b0, wdata[1], wdata[0]};
+                end
+                else begin
+                    // Bit set/reset command for port C.
+                    port_c[wdata[3:1]] <= wdata[0];
+                end
+            end
+            default: ;
+        endcase
+    end
+end
+
+always @(*) begin
+    case (addr)
+        2'd0: rdata = control[4] ? in_pa : port_a;
+        2'd1: rdata = control[1] ? in_pb : port_b;
+        2'd2: rdata = {control[3] ? in_pc[7:4] : port_c[7:4],
+                       control[0] ? in_pc[3:0] : port_c[3:0]};
+        2'd3: rdata = control;
+        default: rdata = 8'hff;
+    endcase
+end
+
+endmodule
+
 // MiSTer index-3 NVRAM upload adapter. The MRA persists 128 bytes while the
 // 93C46 is organized as 64 little-endian 16-bit words.
 module s32_eeprom_nvram_if #(parameter WIDE=0) (
