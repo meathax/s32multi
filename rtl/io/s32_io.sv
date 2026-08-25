@@ -176,13 +176,11 @@ endmodule
 // Compact dual-port storage for the serial EEPROM.  The owning EEPROM stores
 // inverted data so the block RAM's zero-filled power-up state represents the
 // 93C46 erased value (16'hffff) without a reset loop or initialization file.
-// Port A remains a registered read for the serial engine.  Port B is the
-// MiSTer upload/readback view and must expose the selected word before the
-// hps_io capture edge; hps_io advances its file address on that same edge.
-// The upload shadow is exactly the 93C46's 64x16 physical storage and stores
-// the same inverted representation as the block RAM.  It is intentionally a
-// small logic array: Cyclone V altsyncram address ports are clocked, so using
-// the block RAM's port-B q output here would reintroduce the one-word lag.
+// Port A serves the serial engine.  Port B is the MiSTer upload/readback view
+// and must expose the selected word before the hps_io capture edge; hps_io
+// advances its file address on that same edge.  The asynchronous upload shadow
+// is directed to Cyclone V MLAB/LUTRAM in production so it retains this timing
+// contract without consuming a large logic read mux.
 module s32_eeprom_ram (
     input             clk,
     input       [5:0] address_a,
@@ -193,7 +191,7 @@ module s32_eeprom_ram (
     output     [15:0] q_b
 );
 
-(* ramstyle = "logic" *) reg [15:0] upload_shadow [0:63];
+(* ramstyle = "MLAB, no_rw_check" *) reg [15:0] upload_shadow [0:63];
 integer __upload_shadow_init;
 initial begin
     for (__upload_shadow_init = 0; __upload_shadow_init < 64; __upload_shadow_init =
@@ -201,7 +199,8 @@ initial begin
         upload_shadow[__upload_shadow_init] = 16'h0000;
 end
 
-assign q_b = upload_shadow[address_b];
+wire [15:0] upload_shadow_q = upload_shadow[address_b];
+assign q_b = (wren_a && (address_a == address_b)) ? data_a : upload_shadow_q;
 
 always @(posedge clk)
     if (wren_a)
@@ -211,7 +210,7 @@ always @(posedge clk)
 `ifdef S32_V25_MLAB_EEPROM
 // Cyclone V MLABs do not support the true-dual-port shape used below.  The
 // EEPROM has only one writer, so keep a simple-dual-port replica for the
-// serial engine; the upload/readback view is supplied by upload_shadow above.
+// serial engine; the upload/readback view is supplied by upload_shadow.
 // This preserves the optional MLAB resource tradeoff without making HPS
 // depend on a clocked block-RAM address port.
 wire [15:0] q_a_mem;
