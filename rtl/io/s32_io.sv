@@ -176,6 +176,13 @@ endmodule
 // Compact dual-port storage for the serial EEPROM.  The owning EEPROM stores
 // inverted data so the block RAM's zero-filled power-up state represents the
 // 93C46 erased value (16'hffff) without a reset loop or initialization file.
+// Port A remains a registered read for the serial engine.  Port B is the
+// MiSTer upload/readback view and must expose the selected word before the
+// hps_io capture edge; hps_io advances its file address on that same edge.
+// The upload shadow is exactly the 93C46's 64x16 physical storage and stores
+// the same inverted representation as the block RAM.  It is intentionally a
+// small logic array: Cyclone V altsyncram address ports are clocked, so using
+// the block RAM's port-B q output here would reintroduce the one-word lag.
 module s32_eeprom_ram (
     input             clk,
     input       [5:0] address_a,
@@ -186,13 +193,27 @@ module s32_eeprom_ram (
     output     [15:0] q_b
 );
 
+(* ramstyle = "logic" *) reg [15:0] upload_shadow [0:63];
+integer __upload_shadow_init;
+initial begin
+    for (__upload_shadow_init = 0; __upload_shadow_init < 64; __upload_shadow_init =
+         __upload_shadow_init + 1)
+        upload_shadow[__upload_shadow_init] = 16'h0000;
+end
+
+assign q_b = upload_shadow[address_b];
+
+always @(posedge clk)
+    if (wren_a)
+        upload_shadow[address_a] <= data_a;
+
 `ifdef ALTERA_RESERVED_QIS
 `ifdef S32_V25_MLAB_EEPROM
 // Cyclone V MLABs do not support the true-dual-port shape used below.  The
-// EEPROM has only one writer, so keep two coherent simple-dual-port replicas:
-// one supplies the serial engine's read view and one supplies NVRAM upload.
-// This preserves simultaneous reads while releasing the otherwise mostly
-// empty M10K when this optional non-production branch is selected.
+// EEPROM has only one writer, so keep a simple-dual-port replica for the
+// serial engine; the upload/readback view is supplied by upload_shadow above.
+// This preserves the optional MLAB resource tradeoff without making HPS
+// depend on a clocked block-RAM address port.
 wire [15:0] q_a_mem;
 reg         q_a_write_forward = 1'b0;
 reg  [15:0] q_a_write_data = 16'h0000;
@@ -230,30 +251,6 @@ defparam
     ram_serial.ram_block_type = "MLAB",
     ram_serial.read_during_write_mode_mixed_ports = "OLD_DATA";
 
-altsyncram ram_upload (
-    .clock0(clk), .address_a(address_a), .data_a(data_a), .wren_a(wren_a),
-    .clock1(clk), .address_b(address_b), .q_b(q_b),
-    .aclr0(1'b0), .aclr1(1'b0), .addressstall_a(1'b0),
-    .addressstall_b(1'b0), .byteena_a(1'b1), .clocken0(1'b1),
-    .clocken1(1'b1), .clocken2(1'b1), .clocken3(1'b1),
-    .rden_a(1'b1), .rden_b(1'b1), .eccstatus()
-);
-defparam
-    ram_upload.operation_mode = "DUAL_PORT",
-    ram_upload.intended_device_family = "Cyclone V",
-    ram_upload.lpm_type = "altsyncram",
-    ram_upload.numwords_a = 64,
-    ram_upload.widthad_a = 6,
-    ram_upload.width_a = 16,
-    ram_upload.width_byteena_a = 1,
-    ram_upload.numwords_b = 64,
-    ram_upload.widthad_b = 6,
-    ram_upload.width_b = 16,
-    ram_upload.address_reg_b = "CLOCK1",
-    ram_upload.outdata_reg_b = "UNREGISTERED",
-    ram_upload.power_up_uninitialized = "FALSE",
-    ram_upload.ram_block_type = "MLAB",
-    ram_upload.read_during_write_mode_mixed_ports = "OLD_DATA";
 `else
 altsyncram ram (
     .clock0(clk),
@@ -266,7 +263,7 @@ altsyncram ram (
     .address_b(address_b),
     .data_b(16'h0000),
     .wren_b(1'b0),
-    .q_b(q_b),
+    .q_b(),
 
     .aclr0(1'b0),
     .aclr1(1'b0),
@@ -314,9 +311,7 @@ defparam
 `else
 reg [15:0] mem [0:63];
 reg [15:0] q_a_r;
-reg [15:0] q_b_r;
 assign q_a = q_a_r;
-assign q_b = q_b_r;
 
 integer __eep_init;
 initial begin
@@ -326,7 +321,6 @@ end
 
 always @(posedge clk) begin
     q_a_r <= mem[address_a];
-    q_b_r <= mem[address_b];
     if (wren_a) mem[address_a] <= data_a;
 end
 `endif
