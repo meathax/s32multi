@@ -32,8 +32,8 @@ Commercial ROMs are not included.
     directions; right-hand sticks on the right analog sticks or named Right
     Stick Left/Right/Up/Down buttons; start, coin, test, and service
   - Hard Dunk: six independent digital or left-analog movement controls for
-    the 3-vs-3 cabinet, with Pass / Steal and Shoot / Dunk / Block, plus player
-    starts, coin, test, and service
+    the 3-vs-3 cabinet, with Pass / Steal, Shoot / Block, and Special Move /
+    Turbo / Screen Toggle, plus player starts, coin, test, and service
   - Stadium Cross: P1/P2 left-analog X steering with D-pad left/right fallback;
     right-analog Y accelerator/brake, left-analog Y handlebar pitch (up pushes
     forward, down pulls back), D-pad up/down pitch fallback, Attack, Wheelie,

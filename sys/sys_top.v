@@ -714,10 +714,10 @@ wire         bob_deint;
 	ascal 
 	#(
 		.RAMBASE(32'h20000000),
-		// System 32 is at most 416 pixels wide.  Keep the scaler's maximum
-		// input-line width bounded even if downscaling is enabled in a later
-		// build; the default 2048-pixel width wastes RAM on this core.
-		.IHRES(512),
+		// Single-screen System 32 is at most 416 pixels wide.  Multi 32
+		// splitscreen doubles that to 832 active pixels (1024 total), so the
+		// scaler line-buffer bound must cover the composed raster as well.
+		.IHRES(1024),
 	`ifdef MISTER_SMALL_VBUF
 		.RAMSIZE(32'h00200000),
 	`else
