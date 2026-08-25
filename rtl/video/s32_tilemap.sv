@@ -202,6 +202,25 @@ endfunction
 // layer clip windows (MAME compute_clipping_extents, per-pixel form):
 //   rect i = clips[4i..4i+3] = {min_x[8:0], min_y[7:0], max_x[8:0], max_y[7:0]}
 //   (max inclusive); pixel drawn iff !enable | (inside-union ^ clipout)
+function automatic clip_enable_of(input [2:0] bg);
+    reg base;
+    begin
+        base = r1ff02[4'd11 + {1'b0, bg}];
+        clip_enable_of = base;
+        if (is_multi32) begin
+            case (r1ff02)
+                16'h7be0, 16'h52a0, 16'h2960:
+                    clip_enable_of = 1'b0;
+                16'h5be0:
+                    clip_enable_of = (bg[0] == 1'b0) ? base : 1'b0;
+                16'h3be0:
+                    clip_enable_of = (bg[0] == 1'b1) ? base : 1'b0;
+                default: ;
+            endcase
+        end
+    end
+endfunction
+
 function automatic clip_vis(input [8:0] xx, input [8:0] yy,
                             input en, input outp, input [4:0] msk);
     logic [4:0] hit;
@@ -535,7 +554,7 @@ always @(posedge clk) begin
             // clip window: $1FF02 bit (11+bg) enable / (6+bg) clip-out;
             // $1FF06 nibble bg selects rects 0-3
             lb_pix   <= {(opaque_tile || (|pen)) && clip_vis(x[8:0], line,
-                            r1ff02[4'd11 + {1'b0, lay}],
+                            clip_enable_of(lay),
                             r1ff02[4'd6  + {1'b0, lay}],
                             {1'b0, r1ff06[{lay[1:0], 2'b00} +: 4]}),
                          name[12:4], pen};

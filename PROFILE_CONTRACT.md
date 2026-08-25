@@ -2,6 +2,43 @@
 
 This is the persistent cross-chat routing record for the core.
 
+## 2026-08-26: Multi 32 Title Fight background clip-mode correction
+
+Observation: Title Fight's audience/background is absent in both the core and
+MAME, while the flat backdrop and foreground remain. A clean MAME 0.289
+frame-650 capture records `r1ff02=0x2960`, `r1ff04=0xd815`,
+`r1ff06=0x8424`, `r1ff8e=0x0c00`; direct video-RAM lane reads show all selected
+clip rectangles are `[0,0,319,223]`.
+
+Evidence: The attached PCB frames show the audience. The strict headless
+Verilator probe using that state produced 320 NBG0 and 320 NBG2 line-buffer
+writes with zero opacity; clearing only `$1FF02` bits 11 and 13 produced 320
+opaque pixels in both layers. MAME's current source labels those bits as page
+wrapping disable with clipping as an unresolved interpretation. The independent
+MAME2003-plus video path suppresses clipping for the observed Multi 32 mode
+values `0x7be0`, `0x52a0`, `0x2960`, `0x5be0`, and `0x3be0`, with parity rules
+for the last two.
+
+Selected explanation: **INFERRED** — `rtl/video/s32_tilemap.sv` was treating
+the Multi 32 page-wrap mode as a full-screen clip enable, so clip-out erased
+NBG0/NBG2 before the mixer. The fix is register-driven and universal; it does
+not add a Title Fight macro or a second production profile.
+
+Verification and scope: The focused captured-state probe is the first gate;
+the pre-fix result is retained in `tmp/codex-titlef-clip` and the post-fix
+probe shows both background layers opaque in the captured line-160 media case.
+The same probe shows NBG2 visible on transparent NBG0 lines 64 and 112. The
+tilemap regression passed; universal profile/release-routing checks retain
+unrelated pre-existing failures, and the full-core cold-boot build is blocked
+by a stale `clk_v25` testbench pin. No Quartus/RBF build is part of this
+iteration.
+
+Known unknowns: No direct PCB register trace or schematic for this exact
+clip/page-wrap assignment is available in the workspace, so full hardware
+acceptance remains pending. The linked Shorts capture was inaccessible because
+YouTube returned HTTP 403; the attached PCB frames are the visual hardware
+evidence used here.
+
 ## 2026-08-25: Hard Dunk action-button metadata
 
 The shipped Hard Dunk descriptors had regressed to two named actions and
