@@ -23,10 +23,9 @@ module s32_sprite #(
     input             clk,          // clk_ram
     input             rst,
     input             is_multi32,
-    // Which screen's DDR3 buffer to fetch for scanout (MiSTer status[6]):
-    // MAME independently renders both, but only one drives the physical
-    // output at a time, so a single fetch lane for the displayed screen is
-    // sufficient. 0 = screen A, 1 = screen B.
+    // Selected output screen (MiSTer status[6]). Both Multi 32 fetch lanes
+    // share the physical A/B pair; this bit is retained in scan_buf[1] for
+    // the final display selection while scan_buf[0] is the published pair.
     input             screen_sel,
     input       [1:0] srom_bank_mask,
 
@@ -326,8 +325,8 @@ always @(posedge clk) begin
         // Keep logical controller timing separate from physical ownership.
         // Only a frame that reached R_DONE may become visible, and publication
         // occurs at the raster boundary before the line-0 framebuffer fetch.
-        if (present_rise && !is_multi32 && ready_valid) begin
-            scan_buf <= ready_buf;
+        if (present_rise && ready_valid) begin
+            scan_buf <= is_multi32 ? {screen_sel, ready_buf[0]} : ready_buf;
             ready_valid <= 1'b0;
         end
 
@@ -350,6 +349,14 @@ always @(posedge clk) begin
         // lets the V60 finish the next object list before the controller reads.
         R_DELAY: if (post_vblank_count > 16'd1) begin
             post_vblank_count <= post_vblank_count - 1'd1;
+        end
+        else if (is_multi32 && ready_valid) begin
+            // Multi 32 has only two physical A/B pairs. If a serialized
+            // render completed after the last present edge, keep the old
+            // field and wait for the next raster publication before reusing
+            // the pair that is no longer scanned.
+            vblank_pending <= 1'b1;
+            rs <= R_IDLE;
         end
         else begin
             logic [1:0] command;
@@ -386,7 +393,7 @@ always @(posedge clk) begin
                 erase_mon <= 1'b0;
                 if (is_multi32) begin
                     publish_on_done <= 1'b0;
-                    erase_buf_sel <= {1'b0, disp_buf[0]};
+                    erase_buf_sel <= {1'b0, ~scan_buf[0]};
                 end
                 else begin
                     erase_work = choose_work_buf(scan_buf, ready_buf,
@@ -407,20 +414,17 @@ always @(posedge clk) begin
 
         R_SWAP: begin
             logic [1:0] next_work;
-            next_work = choose_work_buf(scan_buf, ready_buf, ready_valid);
+            if (is_multi32)
+                next_work = {1'b0, ~scan_buf[0]};
+            else
+                next_work = choose_work_buf(scan_buf, ready_buf, ready_valid);
             disp_buf <= {1'b0, ~disp_buf[0]}; // bit0 is the sole A/B selector
             publish_on_done <= 1'b1;
-            if (is_multi32)
-                scan_buf <= {screen_sel, ~disp_buf[0]};
-            else begin
-                work_buf <= next_work;
-                erase_buf_sel <= next_work;
-            end
+            work_buf <= next_work;
+            erase_buf_sel <= next_work;
             for (int i = 0; i < 8; i++) ctl_latched[i] <= ctl[i];
             ctl[0] <= 0;
             if (erase_after_swap) begin
-                if (is_multi32)
-                    erase_buf_sel <= {1'b0, disp_buf[0]};
                 erase_after_swap <= 1'b0;
                 render_after_erase <= 1'b1;
                 fb_er_y <= 8'd0;
@@ -640,7 +644,7 @@ always @(posedge clk) begin
                 do_clipout_row <= clipout_en && scry >= $signed(cout_t)
                                              && scry <= $signed(cout_b);
                 fb_wr_start <= 1'b1;
-                fb_wr_buf <= is_multi32 ? {d_mon, ~disp_buf[0]} : work_buf;
+                fb_wr_buf <= is_multi32 ? {d_mon, work_buf[0]} : work_buf;
                 // MAME applies latched controller flip while scanning the
                 // displayed sprite framebuffer.  Mirroring writes into the
                 // back buffer is equivalent and keeps the framebuffer read
@@ -979,8 +983,8 @@ always @(posedge clk) begin
                 // A later completed frame may supersede an older unpresented
                 // one, but an incomplete frame can never be scanned or written
                 // in place.
-                if (!is_multi32 && publish_on_done) begin
-                    ready_buf <= work_buf;
+                if (publish_on_done) begin
+                    ready_buf <= is_multi32 ? {1'b0, work_buf[0]} : work_buf;
                     ready_valid <= 1'b1;
                 end
                 publish_on_done <= 1'b0;
