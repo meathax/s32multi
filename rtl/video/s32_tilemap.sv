@@ -530,15 +530,13 @@ always @(posedge clk) begin
         T_EMIT: begin
             logic [3:0] col;
             logic [3:0] pen;
-            logic       opaque_tile;
             col = srcx[3:0] ^ {4{name[14]}};
-            // $1FF8E[8+bgnum] makes pen 0 opaque for the corresponding NBG.
-            // MAME carries this flag through both the zoom and rowscroll
-            // renderers; it is a tile property for the mixer, not a layer
-            // enable.  Keeping the name/palette bits even for pen 0 lets the
-            // priority mixer place the opaque tile above the backdrop while
-            // still leaving sprites/text to win by their normal ranks.
-            opaque_tile = (lay < 3'd4) && r1ff8e[8 + lay];
+            // $1FF8E[11:8] is NOT a pen-0-opaque enable.  MAME 0.289 keeps
+            // that reading permanently disabled, and Title Fight proves it on
+            // hardware: the game holds $1FF8E=$0C00 while the ring floor is
+            // the per-line backdrop; an opaque NBG2/NBG3 pen 0 would bury the
+            // floor under CRAM[$1800]=black (real-PCB footage shows the
+            // floor).  NBG pen 0 is therefore always transparent here.
             // 4bpp packed msb-first per 16px row (bgcharlayout nibble order)
             // bgcharlayout x-offsets {0,4,16,20,8,12,24,28,...}: column ->
             // nibble index swaps the middle bits; even nibble = high half of
@@ -553,7 +551,7 @@ always @(posedge clk) begin
             lb_x     <= x[8:0];
             // clip window: $1FF02 bit (11+bg) enable / (6+bg) clip-out;
             // $1FF06 nibble bg selects rects 0-3
-            lb_pix   <= {(opaque_tile || (|pen)) && clip_vis(x[8:0], line,
+            lb_pix   <= {(|pen) && clip_vis(x[8:0], line,
                             clip_enable_of(lay),
                             r1ff02[4'd6  + {1'b0, lay}],
                             {1'b0, r1ff06[{lay[1:0], 2'b00} +: 4]}),
