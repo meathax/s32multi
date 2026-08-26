@@ -162,20 +162,20 @@ wire        spr_opaque = !spr_transp && !spr_shadow_pen;   // can win the scan
 // ---------------------------------------------------------------------------
 // effective priority per layer:  {prio[3:0], rank[2:0]}
 //   ordinary rank: sprites=7, text=6, nbg0=5 ... bitmap=1
-//   special low keys: backdrop=1, opaque-zero NBG3/2/1/0=2/3/4/5
+//   special low key: backdrop=1
 //   layer regs: 0x20+2*lay (TEXT..BITMAP), 0x2C background, 0x00+2*grp sprites
 //
-// $1FF8E[8+bg] makes an NBG pen-0 pixel valid.  MAME records the unresolved
-// System 24-style hardware theory as a fallback above the backdrop but behind
-// every real pixel; giving it the layer's ordinary programmed priority instead
-// lets a blank NBG cover terrain and sprites.  Valid NBG pen 0 uniquely
-// identifies this case at the mixer boundary, so the existing format is enough.
+// A layer pixel is a mix candidate only when drawn (bit13, "opaque") and its
+// layer's programmed priority is nonzero — plain MAME mix_all_layers
+// semantics.  $1FF8E[8+bg] no longer reaches the mixer: s32_tilemap now
+// resolves that per-NBG pen-0 enable at the tile source, so a masked pen 0
+// is never marked drawn here (see titlef-floor-backdrop-root-cause).
 // ---------------------------------------------------------------------------
 reg [15:0] sprreg;
 reg [6:0] ep_spr, ep_text, ep_nbg0, ep_nbg1, ep_nbg2, ep_nbg3, ep_bmp;
 reg [6:0] ep_spr_nom;   // sprite order slot regardless of pixel content
-// Only relative ordering is consumed.  Compress the backdrop below the four
-// fallback ranks; every ordinary non-zero-priority layer remains >= 7'd9.
+// Only relative ordering is consumed.  Keep the backdrop key below every
+// ordinary non-zero-priority layer (which is always >= 7'd9).
 wire [6:0] ep_bg = 7'd1;
 reg [15:0] lr_t, lr_0, lr_1, lr_2, lr_3, lr_b;
 always @(*) begin
@@ -184,21 +184,14 @@ always @(*) begin
     lr_2 = mreg[6'h13]; lr_3 = mreg[6'h14]; lr_b = mreg[6'h15];
     ep_spr_nom = (sprreg[3:0] != 0) ? {sprreg[3:0], 3'd7} : 7'd0;
     ep_spr  = spr_opaque ? ep_spr_nom : 7'd0;
-    // bit13 = drawn/opaque.  TEXT and BITMAP set it for real pixels; NBG0-3
-    // additionally set it for $1FF8E opaque pen 0, which receives only its
-    // fixed fallback rank.  The 8bpp bitmap tests the FULL pen byte, so its
-    // low nibble must not be re-tested here.
+    // bit13 = drawn/opaque, set for real pixels only.
     // disabled layers never mix (MAME enablemask) — a disabled layer's
     // line buffer keeps stale pixels, so it must be gated here
     ep_text = (!layer_off[0] && px_text[13] && lr_t[3:0] != 0) ? {lr_t[3:0], 3'd6} : 7'd0;
-    ep_nbg0 = (!layer_off[1] && px_nbg0[13] && lr_0[3:0] != 0)
-            ? ((px_nbg0[3:0] == 4'd0) ? {4'd0, 3'd5} : {lr_0[3:0], 3'd5}) : 7'd0;
-    ep_nbg1 = (!layer_off[2] && px_nbg1[13] && lr_1[3:0] != 0)
-            ? ((px_nbg1[3:0] == 4'd0) ? {4'd0, 3'd4} : {lr_1[3:0], 3'd4}) : 7'd0;
-    ep_nbg2 = (!layer_off[3] && px_nbg2[13] && lr_2[3:0] != 0)
-            ? ((px_nbg2[3:0] == 4'd0) ? {4'd0, 3'd3} : {lr_2[3:0], 3'd3}) : 7'd0;
-    ep_nbg3 = (!layer_off[4] && px_nbg3[13] && lr_3[3:0] != 0)
-            ? ((px_nbg3[3:0] == 4'd0) ? {4'd0, 3'd2} : {lr_3[3:0], 3'd2}) : 7'd0;
+    ep_nbg0 = (!layer_off[1] && px_nbg0[13] && lr_0[3:0] != 0) ? {lr_0[3:0], 3'd5} : 7'd0;
+    ep_nbg1 = (!layer_off[2] && px_nbg1[13] && lr_1[3:0] != 0) ? {lr_1[3:0], 3'd4} : 7'd0;
+    ep_nbg2 = (!layer_off[3] && px_nbg2[13] && lr_2[3:0] != 0) ? {lr_2[3:0], 3'd3} : 7'd0;
+    ep_nbg3 = (!layer_off[4] && px_nbg3[13] && lr_3[3:0] != 0) ? {lr_3[3:0], 3'd2} : 7'd0;
     ep_bmp  = (!layer_off[5] && px_bmp[13]  && lr_b[3:0] != 0) ? {lr_b[3:0], 3'd1} : 7'd0;
 end
 
