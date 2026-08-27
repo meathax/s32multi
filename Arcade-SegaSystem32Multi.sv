@@ -684,6 +684,7 @@ s32_driving_controls driving_controls (
     .left_x(joystick_l_analog_0[7:0]),
     .paddle(paddle_0),
     .spinner(spinner_0),
+    .mouse(ps2_mouse),
     .wheel_source(status[40:39]),
     .right_y(joystick_r_analog_0[15:8]),
     // Dedicated digital pedal fallbacks. OutRunners uses MRA buttons 6/7
@@ -715,6 +716,7 @@ s32_driving_controls driving_controls_p2 (
     .left_x(joystick_l_analog_1[7:0]),
     .paddle(paddle_1),
     .spinner(spinner_1),
+    .mouse(25'd0),
     .wheel_source(status[42:41]),
     .right_y(joystick_r_analog_1[15:8]),
     .digital_accel(p2_digital_accel),

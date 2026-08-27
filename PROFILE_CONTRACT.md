@@ -2,6 +2,87 @@
 
 This is the persistent cross-chat routing record for the core.
 
+## 2026-08-27: relative mouse transport for spinner steering
+
+Observation: The focused adapter regression already passed dedicated HPS
+spinner events, but the production top connected `ps2_mouse` to HPS and never
+fed it into `s32_driving_controls`. The reported Taito Egret and Fightbox R10
+USB spinner failure therefore had no regression coverage for the mouse-like
+relative transport.
+
+Evidence: `rtl/io/s32_driving_controls.sv` previously consumed only
+`spinner[8:0]`; `Arcade-SegaSystem32Multi.sv` now shows the P1 adapter receives
+the existing `ps2_mouse` packet from `sys/hps_io.sv`, whose bit 24 is the mouse
+event toggle and whose Y report is bits 15:8 with direction in bit 4. The
+working Arkanoid adapter at pinned commit
+`60913a349b816c6fc4ced4f6d14d91eb5e7b351c` and Tempest adapter at pinned commit
+`31c52ce5d81d5ceee5a902475df438312fe30aff` both toggle-detect/stage this
+mouse-Y path alongside direct spinner input. This follows the shared KNOWN
+input-adapter lesson requiring all relative transports to meet at one
+normalizer.
+
+Hypotheses: **INFERRED** — the affected devices reach the core through the
+mouse-relative packet path that was dropped. **HYPOTHESIS** — a device-axis
+mapping or mouse-wheel packet may additionally require MiSTer.ini or hardware
+testing; the exact user-device packet route is not available in this checkout.
+
+Selected explanation: **INFERRED** transport omission is the first causal
+producer supported by the local integration and both working references. The
+fix preserves direct spinner input and adds the staged signed mouse-Y event to
+P1 only, so the single global mouse packet cannot move both cockpits.
+
+Smallest change: Add one `mouse[24:0]` input to the shared driving adapter,
+toggle-detect it after startup, sign-extend Y, and feed it through the existing
+reverse/saturating spinner accumulator. Wire P1 to `ps2_mouse` and P2 to zero;
+leave HPS framework, clocks, CDC, ADC routing, profile macros, and Quartus
+files unchanged.
+
+Verification: The focused `tb_driving_controls` now covers direct spinner,
+mouse-only positive/negative/reverse motion, startup suppression, saturation,
+and P1/P2 isolation. The post-change compile and simulation pass. Full source
+and native-HDL regression remain required; physical Egret/R10 input and HDMI
+acceptance still require a fresh RBF on real MiSTer.
+
+Regression scope: Universal `Arcade-SegaSystem32Multi` standard-profile
+driving controls, with OutRunners as the primary consumer and the common
+adapter path retained for the other standard descriptors. No final Quartus or
+RBF build is part of this iteration.
+
+Known unknowns: The exact Egret/R10 packet kind, axis orientation, sensitivity,
+and whether a scroll-wheel extension rather than mouse Y is used. A clean
+hardware HPS input capture and tested RBF are the next evidence threshold.
+
+## 2026-08-26: Multi 32 split-screen gameplay video contract
+
+Observation: Split-screen was already selected as the composed gameplay
+raster, but its top-level aspect metadata was forced to 8:3, ignoring the
+Full Screen and ARC1/ARC2 OSD choices. Its one-line ping-pong compositor also
+passed current vertical blank/sync while displaying the preceding completed
+line.
+
+Evidence: The production top selects `comp_*` into `disp_*` before the normal
+MiSTer `VGA_*` boundary. The vendored `sys_top.v` consumes that same boundary
+for scanlines/OSD, HDMI `ascal`, and the `direct_video` raw HDMI branch; its
+`IHRES=1024` covers the 832-pixel split active width. `video_freak.sv` and
+`sys_top.v` define 0:0 as Full Screen and ARX 1/2 with ARY 0 as ARC1/ARC2.
+The focused split bench now checks both 416- and 320-wide streams, source-line
+alignment, horizontal timing, HSync width, and delayed vertical timing.
+
+Selected explanation: **INFERRED** — the split feature belongs at the existing
+core video boundary, with only the aspect selector and the compositor's
+line-aligned timing needing correction. No framework or PLL change is needed.
+
+Verification and scope: The focused composer bench passes in both native
+modes. A source contract test proves all four aspect choices remain reachable
+in split mode and that `disp_*` feeds CE/RGB/HS/VS/DE plus `video_freak`.
+Strict real-ROM split capture and physical MiSTer HDMI/direct-video,
+scandoubler, and analog acceptance remain required after the floor fix is
+closed. No Quartus/RBF build is part of this iteration.
+
+Known unknowns: The exact PCB line-buffer latency is inferred from the
+synthesizable ping-pong implementation; hardware output timing and monitor
+framing still need a real MiSTer check.
+
 ## 2026-08-26: Multi 32 Title Fight background clip-mode correction
 
 Observation: Title Fight's audience/background is absent in both the core and

@@ -12,6 +12,7 @@ module s32_driving_controls (
     input   [7:0] left_x,
     input   [7:0] paddle,
     input   [8:0] spinner,
+    input  [24:0] mouse,
     input   [1:0] wheel_source,
     input   [7:0] right_y,
     input         digital_accel,
@@ -45,36 +46,56 @@ module s32_driving_controls (
 
     function automatic [7:0] spinner_step(
         input [7:0] position,
-        input signed [8:0] delta
+        input signed [10:0] delta
     );
-        reg signed [9:0] next_position;
+        reg signed [11:0] next_position;
         begin
-            next_position = $signed({2'b00, position}) +
-                            $signed({delta[8], delta});
+            next_position = $signed({4'b0000, position}) + delta;
             if (next_position < 0)
                 spinner_step = 8'h00;
-            else if (next_position > 10'sd255)
+            else if (next_position > 12'sd255)
                 spinner_step = 8'hff;
             else
                 spinner_step = next_position[7:0];
         end
     endfunction
 
-    wire signed [8:0] spinner_delta = {spinner[7], spinner[7:0]};
-    wire signed [8:0] spinner_delta_selected =
-        (wheel_source == 2'd3) ? -spinner_delta : spinner_delta;
+    reg  [24:0] mouse_q;
+    reg         mouse_toggle_d;
+    reg         mouse_valid;
+
+    // Match the working Arkanoid/Tempest HPS mouse transport: bit 24 is an
+    // event toggle, bit 4 carries the signed Y direction, and bits 15:8
+    // carry the relative Y magnitude.
+    wire mouse_event = mouse_valid && (mouse_q[24] != mouse_toggle_d);
+    wire signed [9:0] mouse_delta =
+        $signed({mouse_q[4], mouse_q[4], mouse_q[15:8]});
+    wire signed [10:0] spinner_delta_ext =
+        $signed({{3{spinner[7]}}, spinner[7:0]});
+    wire signed [10:0] mouse_delta_ext =
+        $signed({mouse_delta[9], mouse_delta});
+    wire signed [10:0] relative_delta =
+        (spinner[8] != spinner_toggle_d ? spinner_delta_ext : 11'sd0) +
+        (mouse_event ? mouse_delta_ext : 11'sd0);
+    wire signed [10:0] relative_delta_selected =
+        (wheel_source == 2'd3) ? -relative_delta : relative_delta;
 
     always @(posedge clk) begin
         if (rst) begin
             spinner_position <= 8'h80;
             spinner_toggle_d <= spinner[8];
+            mouse_q <= mouse;
+            mouse_toggle_d <= mouse[24];
+            mouse_valid <= 1'b0;
         end
         else begin
             spinner_toggle_d <= spinner[8];
-            if (spinner[8] != spinner_toggle_d) begin
+            mouse_q <= mouse;
+            mouse_toggle_d <= mouse_q[24];
+            mouse_valid <= 1'b1;
+            if ((spinner[8] != spinner_toggle_d) || mouse_event)
                 spinner_position <= spinner_step(spinner_position,
-                                                 spinner_delta_selected);
-            end
+                                                 relative_delta_selected);
         end
     end
 
