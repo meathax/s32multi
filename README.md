@@ -127,7 +127,7 @@ Linked reference projects and arcade ROMs remain under their respective terms.
 
 ## How to install
 
-Copy `Arcade-SegaSystem32.rbf` and the MRA files to `/media/fat/_Arcade/`.
+Copy `Arcade-SegaSystem32Multi.rbf` and the MRA files to `/media/fat/_Arcade/`.
 Place the required MAME ROM ZIPs in `/media/fat/games/mame/`, then launch a
 game from the MiSTer Arcade menu.
 
