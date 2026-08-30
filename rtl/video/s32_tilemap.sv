@@ -5,6 +5,8 @@
 //    NBG0/1: MAME-exact 12.20 X/Y zoom and fractional scroll
 //            ($1FF10-1E, $1FF50-56, 0x200=1.0)
 //    NBG2/3: rowscroll/rowselect via VRAM tables ($1FF04)
+//    Line windows: $1FF04 bits 4/5 repurpose those tables as per-line
+//            min/max X for clip windows 2/3 (titlef ring, ga2 torch)
 //    TEXT:   8x8 chars from VRAM (page/bank $1FF5C)
 //    BITMAP: linear VRAM bitmap 4/8bpp ($1FF88-8C)
 //  Tile pixel data: 16x16 4bpp from SDRAM tile region via p1 burst port
@@ -82,7 +84,7 @@ endfunction
 
 // rendering FSM: iterate layers, per layer iterate x
 typedef enum logic [4:0] {
-    T_IDLE, T_LSTART, T_SCALE, T_SCALE_APPLY, T_ROWTAB1, T_ROWTAB2, T_ROWSEL1, T_ROWSEL2,
+    T_IDLE, T_LWIN, T_LSTART, T_SCALE, T_SCALE_APPLY, T_ROWTAB1, T_ROWTAB2, T_ROWSEL1, T_ROWSEL2,
     T_NAME, T_NAMEW, T_NAMER, T_PIX, T_PIXW, T_EMIT,
     T_TXT_NAME, T_TXT_NAMEW, T_TXT_NAMER,
     T_TXT_PIX, T_TXT_PIXW, T_TXT_PIXR, T_TXT_EMIT,
@@ -99,6 +101,10 @@ reg signed [31:0] xstep; // MAME source coordinate/step, 12.20 modulo 2^32
 reg [15:0] name;
 reg [63:0] row;
 reg [15:0] rowscroll_add;
+// per-line window X extents fetched from the repurposed row tables
+reg [8:0]  lwa_min, lwa_max;  // clip window 2 override ($1FF04 bit 4)
+reg [8:0]  lwb_min, lwb_max;  // clip window 3 override ($1FF04 bit 5)
+reg [2:0]  lw_ph;
 
 // Row-invariant tile-fetch operands, resolved once per layer row.
 //
@@ -203,36 +209,33 @@ endfunction
 //   rect i = clips[4i..4i+3] = {min_x[8:0], min_y[7:0], max_x[8:0], max_y[7:0]}
 //   (max inclusive); pixel drawn iff !enable | (inside-union ^ clipout)
 function automatic clip_enable_of(input [2:0] bg);
-    reg base;
-    begin
-        base = r1ff02[4'd11 + {1'b0, bg}];
-        clip_enable_of = base;
-        if (is_multi32) begin
-            case (r1ff02)
-                16'h7be0, 16'h52a0, 16'h2960:
-                    clip_enable_of = 1'b0;
-                16'h5be0:
-                    clip_enable_of = (bg[0] == 1'b0) ? base : 1'b0;
-                16'h3be0:
-                    clip_enable_of = (bg[0] == 1'b1) ? base : 1'b0;
-                default: ;
-            endcase
-        end
-    end
+    clip_enable_of = r1ff02[4'd11 + {1'b0, bg}];
 endfunction
 
+// Line windows: when $1FF04 bit 4 (5) repurposes the NBG2 (NBG3) row tables,
+// the rowscroll quarter holds a per-line window min X and the rowselect
+// quarter its max X, overriding clip window 2's (3's) X extents on that line.
+// $FFFF table entries collapse the window to nothing on that line.  Layers
+// opt in through the normal $1FF06 nibble; with clip-out set the layer is
+// drawn only outside the per-line trapezoid (titlef boxing ring, ga2 torch).
 function automatic clip_vis(input [8:0] xx, input [8:0] yy,
                             input en, input outp, input [4:0] msk);
     logic [4:0] hit;
     logic [8:0] test_x;
     logic [8:0] test_y;
+    logic [8:0] cminx, cmaxx;
     integer ci;
     test_x = r1ff00[9] ? (hpix - 1'b1 - xx) : xx;
     test_y = r1ff00[9] ? (9'd223 - yy) : yy;
-    for (ci = 0; ci < 5; ci = ci + 1)
+    for (ci = 0; ci < 5; ci = ci + 1) begin
+        cminx = clips[4*ci][8:0];
+        cmaxx = clips[4*ci+2][8:0];
+        if (ci == 2 && r1ff04[4]) begin cminx = lwa_min; cmaxx = lwa_max; end
+        if (ci == 3 && r1ff04[5]) begin cminx = lwb_min; cmaxx = lwb_max; end
         hit[ci] = msk[ci] &&
-            test_x >= clips[4*ci][8:0]   && test_y >= {1'b0, clips[4*ci+1][7:0]} &&
-            test_x <= clips[4*ci+2][8:0] && test_y <= {1'b0, clips[4*ci+3][7:0]};
+            test_x >= cminx && test_y >= {1'b0, clips[4*ci+1][7:0]} &&
+            test_x <= cmaxx && test_y <= {1'b0, clips[4*ci+3][7:0]};
+    end
     clip_vis = !en || ((|hit) ^ outp);
 endfunction
 
@@ -251,6 +254,9 @@ always @(posedge clk) begin
         scale_cache_valid[0] <= 1'b0;
         scale_cache_valid[1] <= 1'b0;
         bmp_word_valid <= 1'b0;
+        lwa_min <= 9'h1ff; lwa_max <= 9'h1ff;
+        lwb_min <= 9'h1ff; lwb_max <= 9'h1ff;
+        lw_ph <= 3'd0;
     end
     else begin
         lb_we <= 1'b0;
@@ -268,7 +274,42 @@ always @(posedge clk) begin
             line_done <= 0;
             // A cached bitmap word never crosses a scanline epoch.
             bmp_word_valid <= 1'b0;
-            tst <= T_LSTART;
+            if (r1ff04[4] | r1ff04[5]) begin
+                // fetch this line's window extents from the row tables
+                vram_addr <= {r1ff04[15:10], 10'b0} +
+                             {7'b0, (r1ff00[9] ? (9'd223 - line) : line)};
+                lw_ph <= 3'd0;
+                tst <= T_LWIN;
+            end
+            else tst <= T_LSTART;
+        end
+
+        // Per-line window fetch: four table words at +0x000/+0x200 (window 2
+        // min/max X) and +0x100/+0x300 (window 3 min/max X), two VRAM-latency
+        // cycles apiece, before any layer of this line renders.
+        T_LWIN: begin
+            logic [15:0] lw_row;
+            lw_row = {7'b0, (r1ff00[9] ? (9'd223 - line) : line)};
+            lw_ph <= lw_ph + 3'd1;
+            case (lw_ph)
+                3'd1: begin
+                    lwa_min <= vram_rdata[8:0];
+                    vram_addr <= {r1ff04[15:10], 10'b0} + 16'h0200 + lw_row;
+                end
+                3'd3: begin
+                    lwa_max <= vram_rdata[8:0];
+                    vram_addr <= {r1ff04[15:10], 10'b0} + 16'h0100 + lw_row;
+                end
+                3'd5: begin
+                    lwb_min <= vram_rdata[8:0];
+                    vram_addr <= {r1ff04[15:10], 10'b0} + 16'h0300 + lw_row;
+                end
+                3'd7: begin
+                    lwb_max <= vram_rdata[8:0];
+                    tst <= T_LSTART;
+                end
+                default: ;
+            endcase
         end
 
         // per-layer setup
