@@ -21,7 +21,9 @@ Commercial ROMs are not included.
 - Original 4:3 or full-screen aspect ratio
 - Normal, vertical-integer, or full-integer scaling
 - Optional CRT 25%, 50%, and 75% scandoubler effects
-- Multi 32 screen A/B selection and optional side-by-side split-screen view
+- Multi 32 screen A/B selection and an optional side-by-side split-screen
+  gameplay view; split-screen keeps the standard MiSTer aspect, scaling,
+  scandoubler, direct-video, HDMI, sync, and blanking paths
 - Persistent 128-byte 93C46 high-score/settings storage
 - Service mode and reset, with independent Test/Service controls for each
   cockpit

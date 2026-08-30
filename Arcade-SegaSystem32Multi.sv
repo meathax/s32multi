@@ -941,11 +941,14 @@ assign VGA_SL = scanline_level[1:0];
 // Full Screen fills; [ARC1]/[ARC2] emit the framework custom-aspect encoding
 // (ARY=0, ARX = menu index) instead of acting as 16:9 (audit R20 PF-2).
 wire [1:0] aspect = status[2:1];
-// Two 4:3 screens side by side is ~8:3, wide of a single screen's 4:3/16:9
-// choices -- override the OSD aspect selector while Splitscreen is on.
-wire [11:0] aspect_arx = splitscreen_en ? 12'd8 :
-                          (aspect == 0) ? 12'd4 : {10'd0, (aspect - 1'd1)};
-wire [11:0] aspect_ary = splitscreen_en ? 12'd3 :
+// Two 4:3 screens side by side is ~8:3 in the Original setting, but split
+// mode still honours Full Screen and the framework's ARC1/ARC2 encodings.
+// ARY=0 with ARX=1/2 is decoded by sys_top as ARC1/ARC2; 0:0 is Full Screen.
+wire [11:0] aspect_arx = splitscreen_en
+                       ? ((aspect == 0) ? 12'd8 :
+                          (aspect == 1) ? 12'd0 : {10'd0, (aspect - 1'd1)})
+                       : (aspect == 0) ? 12'd4 : {10'd0, (aspect - 1'd1)};
+wire [11:0] aspect_ary = splitscreen_en ? ((aspect == 0) ? 12'd3 : 12'd0) :
                           (aspect == 0) ? 12'd3 : 12'd0;
 
 // Keep the framework's integer-scaling size calculation available through the

@@ -11,10 +11,9 @@
 //  then plays both back on an output-side raster running at exactly 2x the
 //  native pixel rate: hdisp_out = 2*hdisp_native active pixels/line (screen A
 //  first, screen B second), htotal_out = 2*htotal_native. Vertical timing
-//  (vcnt/vblank/vsync) is untouched -- passed straight through from the
-//  native core, since only the horizontal dimension needs to double; the
-//  displayed picture trails vsync by one line, same as any line-buffered
-//  scan doubler (see crt_adjust.sv's own line buffer for the same idiom).
+//  Vertical blank/sync are delayed by that same one-line latency below, so
+//  direct video and the HDMI scaler see DE/sync aligned with the pixels rather
+//  than a missing first line and a hidden last line at each frame edge.
 //
 //  Line buffers are 1-line ping-pong (write the line in progress into
 //  `wr_bank`, read the previous, now-complete line from `~wr_bank`) --
@@ -28,8 +27,8 @@
 //  run_regression.ps1 as t23_splitscreen_composer): a self-referential
 //  stream-shape check confirms, in both 416- and 320-mode, that the output
 //  active region is exactly 416 (or 320) screen-A samples in native hcnt
-//  order followed by the same for screen B, every line, with vblank/vsync
-//  passthrough intact. That testbench is also what caught the single-buffer
+//  order followed by the same for screen B, every line, with line-aligned
+//  vblank/vsync. That testbench is also what caught the single-buffer
 //  (non-ping-pong) first draft of this module tearing the picture -- the
 //  read side, running at 2x the native rate, raced ahead of the write
 //  pointer mid-line. Still no MAME/Verilator differential regression on the
@@ -53,9 +52,9 @@ module s32_splitscreen_composer (
     output reg [23:0] rgb_out,
     output            ce_pix_out,
     output reg        hsync_out,
-    output            vsync_out,
+    output reg        vsync_out,
     output reg        hblank_out,
-    output            vblank_out
+    output reg        vblank_out
 );
 
 // -----------------------------------------------------------------------
@@ -187,8 +186,21 @@ always @(posedge clk) begin
     end
 end
 
-// vertical timing is untouched -- pass the native signals straight through
-assign vblank_out = vblank_native;
-assign vsync_out  = vsync_native;
+// The read side displays the line completed at the preceding native line
+// boundary. Capture the native line's timing at that same boundary so the
+// output DE/sync state describes the line held in the selected read bank.
+// Reset starts blank until the first complete line has been captured; this
+// prevents the uninitialized/empty read bank from being exposed as active
+// video after reset.
+always @(posedge clk) begin
+    if (rst) begin
+        vblank_out <= 1'b1;
+        vsync_out  <= 1'b0;
+    end
+    else if (line_boundary_native) begin
+        vblank_out <= vblank_native;
+        vsync_out  <= vsync_native;
+    end
+end
 
 endmodule
