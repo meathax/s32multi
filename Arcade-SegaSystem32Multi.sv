@@ -115,6 +115,7 @@ wire        eep_upload, eep_modified;
 wire  [5:0] eep_rd_addr;
 wire [15:0] eep_rd_data;
 wire [31:0] joystick_0, joystick_1, joystick_2, joystick_3, joystick_4, joystick_5;
+wire [15:0] joystick_0_rumble, joystick_1_rumble;
 wire [15:0] joystick_l_analog_0;
 wire [15:0] joystick_l_analog_1;
 wire [15:0] joystick_l_analog_2;
@@ -129,6 +130,7 @@ wire  [8:0] spinner_0;
 wire  [8:0] spinner_1;
 wire        core_hs, core_vs;
 wire        mode_416_active;
+wire  [1:0] core_steering_motors;
 wire [24:0] ps2_mouse;
 // This RBF contains the common Sega System Multi 32 (837-8676) hardware used
 // by the supported Multi 32 titles.  The descriptor is committed by the ROM
@@ -187,10 +189,14 @@ localparam CONF_STR = {
     "-;",
     "O[40:39],P1 Steering,Analog Wheel,Paddle,Spinner,Spinner Reverse;",
     "O[42:41],P2 Steering,Analog Wheel,Paddle,Spinner,Spinner Reverse;",
+    "h0P2,Rumble;",
+    "h0P2O[43],Rumble,On,Off;",
+    "h0P2O[45:44],Rumble Strength,Low,Medium,High;",
     // status[8], status[30:34], status[36:37] were the lightgun/GunCon SNAC
     // options (Sinden Borders, Gun Crosshair, Gun Sensitivity, P1/P2 Gun
     // Input) -- OutRunners has no positional-gun cabinet. Left unallocated
     // rather than reclaimed, matching the status[29] convention below.
+    // status[43] = OutRunners rumble enable; status[45:44] = rumble strength.
     // status[29] is RESERVED and intentionally unused.  It used to select
     // "V60 Fetch,Fast,PCB (Reset)"; the Fast instruction-fetch transport has
     // been removed and the core always uses the PCB fetch path.  The bit is
@@ -230,6 +236,30 @@ assign CLK_VIDEO = clk_sys;
 // reset and NVRAM transfers do not forget that ROM is already resident.
 wire video_reset = RESET | status[0] | buttons[1] | ~pll_locked;
 wire reset = video_reset | ioctl_download | ~rom_loaded | ~sdram_ready_sys;
+
+// Hide the OutRunners rumble page unless the committed descriptor selects that
+// title. h0 means hide when menu-mask bit 0 is clear.
+wire [15:0] status_menumask;
+assign status_menumask = {15'd0, (active_board.game_profile == MULTI32_OUTRUNNERS)};
+
+// The PCB exposes a binary steering-wheel shaker request. Translate it to
+// MiSTer's large-rumble channel; these magnitudes are controller policy, not
+// claims about the original cabinet driver's analogue amplitude.
+localparam [7:0] OUTRUNNERS_RUMBLE_LOW    = 8'h40;
+localparam [7:0] OUTRUNNERS_RUMBLE_MEDIUM = 8'h80;
+localparam [7:0] OUTRUNNERS_RUMBLE_HIGH   = 8'hff;
+wire outrunners_rumble_active = ~reset &&
+                                 (active_board.game_profile == MULTI32_OUTRUNNERS);
+wire outrunners_rumble_enabled = outrunners_rumble_active && ~status[43];
+wire [7:0] outrunners_rumble_magnitude =
+    (status[45:44] == 2'd0) ? OUTRUNNERS_RUMBLE_LOW :
+    (status[45:44] == 2'd1) ? OUTRUNNERS_RUMBLE_MEDIUM :
+    (status[45:44] == 2'd2) ? OUTRUNNERS_RUMBLE_HIGH : 8'h00;
+wire [15:0] outrunners_rumble_value = {outrunners_rumble_magnitude, 8'h00};
+assign joystick_0_rumble = (outrunners_rumble_enabled && core_steering_motors[0])
+                          ? outrunners_rumble_value : 16'h0000;
+assign joystick_1_rumble = (outrunners_rumble_enabled && core_steering_motors[1])
+                          ? outrunners_rumble_value : 16'h0000;
 
 // Synchronise the controller-ready level from clk_ram before it gates the
 // loader and the game logic in clk_sys.
@@ -333,7 +363,7 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io (
 
     .buttons(buttons),
     .status(status),
-    .status_menumask(16'd0),
+    .status_menumask(status_menumask),
 
     .ioctl_download(ioctl_download),
     .ioctl_upload(ioctl_upload),
@@ -361,6 +391,8 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io (
     .joystick_l_analog_5(joystick_l_analog_5),
     .joystick_r_analog_0(joystick_r_analog_0),
     .joystick_r_analog_1(joystick_r_analog_1),
+    .joystick_0_rumble(joystick_0_rumble),
+    .joystick_1_rumble(joystick_1_rumble),
     .paddle_0(paddle_0),
     .paddle_1(paddle_1),
     .spinner_0(spinner_0),
@@ -889,7 +921,8 @@ s32_core core (
     .hcnt_o(core_hcnt), .vcnt_o(),
     .mode_416_active(mode_416_active),
     .audio_l(aud_l), .audio_r(aud_r),
-    .out_lamps()
+    .out_lamps(),
+    .out_steering_motors(core_steering_motors)
 );
 
 wire splitscreen_en = status[38];

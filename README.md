@@ -27,6 +27,7 @@ Commercial ROMs are not included.
 - Persistent 128-byte 93C46 high-score/settings storage
 - Service mode and reset, with independent Test/Service controls for each
   cockpit
+- OutRunners-only steering-wheel rumble with On/Off and Low/Medium/High strength
 - Descriptor-selected controls for each fully supported cabinet:
   - OutRunners: shift up/down, DJ/music, track previous/next, accelerator,
     brake, start, coin, test, and service
@@ -58,7 +59,7 @@ protection, and link-board questions remain outside this release's verified scop
 | Scroll hardware | Sega schematics, sheet 2; Sega 315-5387 | Four tilemap layers and dual-port VRAM in [`s32_tilemap.sv`](rtl/video/s32_tilemap.sv) |
 | Objects/frame memory | Sega schematics, sheets 3-4; Sega 315-5386 | Object processing and buffered framebuffer in [`s32_sprite.sv`](rtl/video/s32_sprite.sv) and [`s32_fb_if.sv`](rtl/mem/s32_fb_if.sv) |
 | Colour/video output | Sega schematics, sheet 5; [315-5242 silicon evidence](https://github.com/furrtek/SiliconRE/tree/master/Sega/315-5242) | Palette, priority, shadow/highlight, and RGB output in [`s32_mixer.sv`](rtl/video/s32_mixer.sv) and [`s32_palette.sv`](rtl/video/s32_palette.sv) |
-| I/O and EEPROM | Sega schematics, sheet 6 | 315-5296 I/O and BR93C46 serial storage in [`s32_io.sv`](rtl/io/s32_io.sv) |
+| I/O, EEPROM, and OutRunners wheel vibration | Sega schematics, sheet 6; [OutRunners service manual](https://www.arcade-museum.com/manuals-videogames/O/Out-Runners.pdf), output test and motor service | 315-5296 I/O, BR93C46 serial storage, and port-D bit 4 steering-motor output in [`s32_io.sv`](rtl/io/s32_io.sv) and [`Arcade-SegaSystem32Multi.sv`](Arcade-SegaSystem32Multi.sv) |
 
 
 ## Supported games
@@ -85,7 +86,7 @@ or AS-1 sets are not distributed or supported by this production profile.
 | Chip or subsystem | Interface | Implementation / reference |
 | --- | --- | --- |
 | NEC V70-compatible CPU path | 20 MHz Multi 32 bus-rate CE, 16-bit adapter / 24-bit address space | [`s32_v60.sv`](rtl/cpu/v60/s32_v60.sv), [`s32_v60_bus.sv`](rtl/cpu/v60/s32_v60_bus.sv) |
-| Dual Sega 315-5296 I/O | Two JAMMA-edge lanes, buttons, service, coin, timers | [`s32_io.sv`](rtl/io/s32_io.sv), [`Arcade-SegaSystem32Multi.sv`](Arcade-SegaSystem32Multi.sv) |
+| Dual Sega 315-5296 I/O | Two JAMMA-edge lanes, buttons, service, coin, timers, and OutRunners wheel-motor outputs | [`s32_io.sv`](rtl/io/s32_io.sv), [`Arcade-SegaSystem32Multi.sv`](Arcade-SegaSystem32Multi.sv) |
 | 315-5386 / 315-5387 video engines | Objects, four tilemap layers, VRAM, and buffered dual-screen frame memory | [`s32_sprite.sv`](rtl/video/s32_sprite.sv), [`s32_tilemap.sv`](rtl/video/s32_tilemap.sv), [`s32_fb_if.sv`](rtl/mem/s32_fb_if.sv) |
 | Dual 315-5388 / 315-5242 video output | Two palettes, priority, shadow/highlight, RGB, and A/B composition | [`s32_mixer.sv`](rtl/video/s32_mixer.sv), [`s32_palette.sv`](rtl/video/s32_palette.sv), [`s32_splitscreen_composer.sv`](rtl/video/s32_splitscreen_composer.sv) |
 | BR93C46 EEPROM | Serial NVRAM and MiSTer upload/download | [`s32_io.sv`](rtl/io/s32_io.sv) |

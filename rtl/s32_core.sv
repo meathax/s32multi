@@ -175,7 +175,8 @@ module s32_core #(
 
     output signed [15:0] audio_l,
     output signed [15:0] audio_r,
-    output      [7:0] out_lamps
+    output      [7:0] out_lamps,
+    output      [1:0] out_steering_motors
 );
 
 // The production profile is one resource shape shared by all supported
@@ -998,7 +999,7 @@ end
 // I/O chips + EEPROM
 // ---------------------------------------------------------------------------
 wire [7:0] io0_q, io1_q;
-wire [7:0] io0_pc, io0_pd, io0_pg, io0_dir, io1_ph;
+wire [7:0] io0_pc, io0_pd, io0_pg, io0_dir, io1_pd, io1_ph;
 // No Rad Mobile moving-controller mailbox on this board (cfg_has_motor_hle is
 // always 0); s32_radm_motor_mailbox was removed.
 wire [7:0] io0_pc_in = in_portc;
@@ -1021,6 +1022,7 @@ s32_io5296 io0 (
     .cnt0(), .cnt1(io0_cnt1), .cnt2(io0_cnt2)
 );
 assign out_lamps = io0_pd;
+assign out_steering_motors = {io1_pd[4], io0_pd[4]};
 
 s32_io5296 io1 (
     .clk(clk_sys), .rst(rst),
@@ -1031,7 +1033,7 @@ s32_io5296 io1 (
     // (MAME io_chip_1.in_pf = SERVICE34_B, do_read on bit 7); previously io1 got
     // constant 0xff there, so Multi 32 NVRAM boot never converged (audit R23-F1).
     .in_pe(in_svc12_b), .in_pf({eep_do, in_svc34_b[6:0]}),
-    .out_pc(), .out_pd(), .out_pg(), .out_ph(io1_ph), .dir_out(),
+    .out_pc(), .out_pd(io1_pd), .out_pg(), .out_ph(io1_ph), .dir_out(),
     // cnt1 = screen-B display enable (MAME io_chip_1 out_cnt1 -> display_enable_w<1>).
     .cnt0(), .cnt1(io1_cnt1), .cnt2()
 );
