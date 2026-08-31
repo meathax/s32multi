@@ -127,6 +127,11 @@ reg [6:0]  rbeat;
 // flush boundary keeps the active byte-enable path independent of run_x0 and
 // the beat counter's add chain.
 reg [6:0]  run_word_q;
+// The mask for the current and following DDR words is advanced with the
+// flusher rather than re-sliced from the 512-bit capture mask in the FSM
+// state decision.  This preserves the per-word DDR cadence while keeping the
+// variable part-select off the state-register timing path.
+reg [3:0]  run_cur_mask_q, run_next_mask_q;
 wire        line_we  = (dst == D_RD_W) && DDRAM_DOUT_READY && !rd_active2;
 wire        line_we_b= (dst == D_RD_W) && DDRAM_DOUT_READY &&  rd_active2;
 wire [63:0] line_wdata = DDRAM_DOUT;
@@ -193,9 +198,9 @@ endfunction
 // accepting edge q still contains the immediately following word.  Thus the
 // registered RAM sustains one DDR word per accepted clock without allowing a
 // stalled request's data to change.
-wire [6:0] run_word_base = run_word_q;
 wire [6:0] run_cur_word  = run_word_q;
 wire [6:0] run_next_word = run_word_q + 7'd1;
+wire [6:0] run_next2_word = run_word_q + 7'd2;
 wire [6:0] run_ram_raddr = (dst == D_IDLE)       ? cap_x0[flush_sel][8:2] :
                             (dst == D_WR_PF)      ? run_next_word :
                             (dst == D_WR_SKIP)    ? run_cur_word :
@@ -204,12 +209,15 @@ wire [6:0] run_ram_raddr = (dst == D_IDLE)       ? cap_x0[flush_sel][8:2] :
                                                      + (DDRAM_BUSY ? 7'd1 : 7'd2) :
                                                     run_cur_word;
 
-// cap_msk[flush_sel] is stable from enqueue until the selected run completes;
-// use only the active four-pixel slice instead of copying all 512 bits into a
-// second snapshot register bank.
-wire [3:0] run_base_mask = cap_msk[flush_sel][{run_word_base, 2'b00} +: 4];
-wire [3:0] run_cur_mask  = cap_msk[flush_sel][{run_cur_word,  2'b00} +: 4];
-wire [3:0] run_next_mask = cap_msk[flush_sel][{run_next_word, 2'b00} +: 4];
+// cap_msk[flush_sel] is stable from enqueue until the selected run completes.
+// Load the first two slices at dispatch, then shift the registered lookahead
+// whenever the flusher advances to another word. The one remaining variable
+// slice is only used to fill the lookahead register, not to choose the next
+// FSM state in the same cycle.
+wire [3:0] run_next2_mask = cap_msk[flush_sel][{run_next2_word, 2'b00} +: 4];
+wire [3:0] run_base_mask  = run_cur_mask_q;
+wire [3:0] run_cur_mask   = run_cur_mask_q;
+wire [3:0] run_next_mask  = run_next_mask_q;
 wire [7:0] run_base_be = {{2{run_base_mask[3]}}, {2{run_base_mask[2]}},
                            {2{run_base_mask[1]}}, {2{run_base_mask[0]}}};
 wire [7:0] run_cur_be = {{2{run_cur_mask[3]}}, {2{run_cur_mask[2]}},
@@ -304,6 +312,8 @@ always @(posedge clk) begin
         dst <= D_IDLE; dwe <= 0; drd <= 0; er_ack <= 0; rd_ack <= 0;
         rd2_ack <= 0; rd_active2 <= 1'b0;
         run_word_q <= 7'd0;
+        run_cur_mask_q <= 4'b0000;
+        run_next_mask_q <= 4'b0000;
         pending <= 2'b00;
         flush_sel <= 1'b0;
         display_bank <= 1'b0;
@@ -363,6 +373,8 @@ always @(posedge clk) begin
                 beat  <= 0;
                 beats <= (cap_xe[flush_sel][8:2] - cap_x0[flush_sel][8:2]);
                 run_word_q <= cap_x0[flush_sel][8:2];
+                run_cur_mask_q <= cap_msk[flush_sel][{cap_x0[flush_sel][8:2], 2'b00} +: 4];
+                run_next_mask_q <= cap_msk[flush_sel][{cap_x0[flush_sel][8:2] + 7'd1, 2'b00} +: 4];
                 daddr <= pix_addr(cap_bufsel[flush_sel], cap_y[flush_sel],
                                   cap_x0[flush_sel][8:2]);
                 if (!cap_any[flush_sel]) begin
@@ -419,6 +431,8 @@ always @(posedge clk) begin
                 // mask locally instead of consuming external acceptance slots.
                 beat  <= beat + 1'd1;
                 run_word_q <= run_word_q + 1'd1;
+                run_cur_mask_q <= run_next_mask_q;
+                run_next_mask_q <= run_next2_mask;
                 daddr <= daddr + 1'd1;
                 dwe   <= 1'b0;
                 dst   <= D_WR_SKIP;
@@ -426,6 +440,8 @@ always @(posedge clk) begin
             else begin
                 beat  <= beat + 1'd1;
                 run_word_q <= run_word_q + 1'd1;
+                run_cur_mask_q <= run_next_mask_q;
+                run_next_mask_q <= run_next2_mask;
                 daddr <= daddr + 1'd1;
                 dbe   <= run_next_be;
                 dwe   <= 1'b1;
@@ -446,6 +462,8 @@ always @(posedge clk) begin
             else begin
                 beat  <= beat + 1'd1;
                 run_word_q <= run_word_q + 1'd1;
+                run_cur_mask_q <= run_next_mask_q;
+                run_next_mask_q <= run_next2_mask;
                 daddr <= daddr + 1'd1;
             end
         end
@@ -478,6 +496,8 @@ always @(posedge clk) begin
             else begin
                 beat   <= beat + 1'd1;
                 run_word_q <= run_word_q + 1'd1;
+                run_cur_mask_q <= run_next_mask_q;
+                run_next_mask_q <= run_next2_mask;
                 daddr  <= daddr + 1'd1;
                 dburst <= 8'd1;
                 if (run_next_mask != 4'b0000) begin
@@ -511,6 +531,8 @@ always @(posedge clk) begin
             else begin
                 beat  <= beat + 1'd1;
                 run_word_q <= run_word_q + 1'd1;
+                run_cur_mask_q <= run_next_mask_q;
+                run_next_mask_q <= run_next2_mask;
                 daddr <= daddr + 1'd1;
             end
         end

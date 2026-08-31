@@ -1,0 +1,38 @@
+name: lint-and-regression
+
+# Fast feedback: compiles every RTL module and runs the simulation regression
+# (iverilog). Independent of Quartus — runs in ~1 minute on the free runners.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Icarus Verilog
+        run: sudo apt-get update && sudo apt-get install -y iverilog
+
+      - name: Run the 7-tier regression
+        run: sh verif/run_regression.sh
+
+      - name: Regenerate MRAs (validates generator self-checks)
+        run: |
+          # Requires a local MAME segas32.cpp; skipped in CI unless provided.
+          if [ -f verif/ref/segas32.cpp ]; then
+            python3 tools/gen_mra.py verif/ref/segas32.cpp /tmp/mra
+            python3 - <<'PY'
+          import glob, xml.dom.minidom
+          for f in glob.glob('/tmp/mra/*.mra'):
+              xml.dom.minidom.parse(f)
+          print("MRA XML: all valid")
+          PY
+          else
+            echo "skip MRA gen (verif/ref/segas32.cpp not present)"
+          fi

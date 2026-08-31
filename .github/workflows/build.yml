@@ -1,0 +1,58 @@
+name: verify-source
+
+# Public CI intentionally does not compile or publish an RBF. The only
+# supported release path is the named-mutex Windows build using the pinned
+# D:\Q17 Quartus Lite 17.0.2.602 installation:
+#
+#   set QUARTUS_ROOT=D:\Q17
+#   tools\build-segas32.bat      (all supported parents, including real V25)
+#
+# That path records an input manifest, qualifies fit and multicorner timing,
+# and stages the hash-verified universal RBF. Community containers and the legacy
+# Linux qualifier cannot provide the same provenance and are fail-closed.
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-verification:
+    name: Source and release-profile checks
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run portable Python verification
+        shell: pwsh
+        run: python -B -m unittest discover -s verif -p "test_*.py" -v
+
+      - name: Check release profiles and MRAs
+        shell: pwsh
+        run: |
+          python -B verif/check_ga2_release.py
+          python -B verif/check_arabianfight_release.py
+          python -B verif/check_holo_release.py
+
+      - name: Check fail-closed shell entrypoint syntax
+        shell: bash
+        run: bash -n tools/build.sh
+
+      - name: Enforce source-only CI policy
+        shell: pwsh
+        run: |
+          $unexpected = @(Get-ChildItem -Path releases -Filter *.rbf -File -ErrorAction SilentlyContinue)
+          if ($unexpected.Count -ne 0) {
+            throw "Source verification must not produce or publish an RBF."
+          }
+          Write-Host "RBF generation remains on the locked tools\build-segas32*.bat paths."
