@@ -234,8 +234,8 @@ reg [11:0] exp_vol_rom [0:1023];
 // TL_GAIN_ROM: gew.cpp's per-level total-level curve, -24dB over 64 steps
 // (i.e. -0.375dB/step), i.e. gain(level) = 10^(level*-24/64/20); stored as
 // a pure Q10 linear gain (1024 = unity) rather than MAME's pan-table-fused
-// /4-padded form, since this design keeps TL and pan as separate
-// multiplies (pan_sample() below, unchanged from the prior revision).
+// form, since this design keeps TL and pan as separate multiplies. The
+// device's /4 output headroom is applied to the completed sum below.
 reg [10:0] tl_gain_rom [0:127];
 
 // LFO_FREQ[8] phase-step-per-voice-tick (gew.cpp lfo_compute_step:
@@ -872,8 +872,8 @@ always @(posedge clk) begin
                 tick <= 0;
                 if (slot == 5'd27) begin
                     slot <= 0;
-                    out_l <= clamp16(acc_l);
-                    out_r <= clamp16(acc_r);
+                    out_l <= clamp16(acc_l >>> 2);
+                    out_r <= clamp16(acc_r >>> 2);
                     acc_l <= 0;
                     acc_r <= 0;
                 end
